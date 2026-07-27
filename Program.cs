@@ -1,0 +1,1 @@
+using System; using S3ForgeTools.GameFiles.Package; class Program { static void Main(string[] args) { using var pkg = new DBPFPackage(args[0]); foreach(var res in pkg.Resources) { Console.WriteLine($"{res.Key.Type:X8}-{res.Key.Group:X8}-{res.Key.Instance:X16} Size: {res.Length}"); } } }

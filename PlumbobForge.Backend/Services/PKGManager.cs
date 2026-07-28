@@ -48,22 +48,22 @@ public class PKGManager
 
     public async Task UploadFilesAsync(Microsoft.AspNetCore.Http.IFormFileCollection files, Action<string>? onProgress = null)
     {
-        try 
+        try
         {
             if (!Directory.Exists(_options.ManagedPackageFolderPath))
             {
                 Directory.CreateDirectory(_options.ManagedPackageFolderPath);
             }
             int movedCount = 0;
-            
+
             foreach (var file in files)
             {
                 if (file.Length == 0) continue;
 
                 string fileName = Path.GetFileName(file.FileName);
                 string dest = Path.Combine(_options.ManagedPackageFolderPath, fileName);
-                
-                try 
+
+                try
                 {
                     if (File.Exists(dest))
                     {
@@ -100,22 +100,22 @@ public class PKGManager
 
     public async Task ImportFilesAsync(string[] files, Action<string>? onProgress = null)
     {
-        try 
+        try
         {
             if (!Directory.Exists(_options.ManagedPackageFolderPath))
             {
                 Directory.CreateDirectory(_options.ManagedPackageFolderPath);
             }
             int movedCount = 0;
-            
+
             foreach (var file in files)
             {
                 if (!File.Exists(file)) continue;
 
                 string fileName = Path.GetFileName(file);
                 string dest = Path.Combine(_options.ManagedPackageFolderPath, fileName);
-                
-                try 
+
+                try
                 {
                     if (File.Exists(dest))
                     {
@@ -129,7 +129,7 @@ public class PKGManager
                     onProgress?.Invoke($"Failed to import {fileName}: {ex.Message}");
                 }
             }
-            
+
             if (movedCount > 0)
             {
                 onProgress?.Invoke($"Imported {movedCount} files to Library. Registering in database...");
@@ -149,10 +149,10 @@ public class PKGManager
 
     public async Task ImportFromDownloadsAsync(Action<string>? onProgress = null)
     {
-        try 
+        try
         {
             string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
-            if (eaDir == null) 
+            if (eaDir == null)
             {
                 onProgress?.Invoke("Could not find Electronic Arts directory.");
                 return;
@@ -166,11 +166,11 @@ public class PKGManager
             }
 
             onProgress?.Invoke("Scanning Downloads folder for packages...");
-            
+
             var packageFiles = Directory.GetFiles(downloadsDir, "*.package");
             var sims3packFiles = Directory.GetFiles(downloadsDir, "*.sims3pack");
             var files = packageFiles.Concat(sims3packFiles).ToArray();
-            
+
             if (files.Length == 0)
             {
                 onProgress?.Invoke("No .package or .sims3pack files found in Downloads.");
@@ -182,13 +182,13 @@ public class PKGManager
                 Directory.CreateDirectory(_options.ManagedPackageFolderPath);
             }
             int movedCount = 0;
-            
+
             foreach (var file in files)
             {
                 string fileName = Path.GetFileName(file);
                 string dest = Path.Combine(_options.ManagedPackageFolderPath, fileName);
-                
-                try 
+
+                try
                 {
                     if (File.Exists(dest))
                     {
@@ -203,7 +203,7 @@ public class PKGManager
                     onProgress?.Invoke($"Failed to move {fileName}: {ex.Message}");
                 }
             }
-            
+
             if (movedCount > 0)
             {
                 onProgress?.Invoke($"Moved {movedCount} files to Library. Registering in database...");
@@ -224,7 +224,7 @@ public class PKGManager
     public async Task AutoFixAsync(Action<string>? onProgress = null)
     {
         onProgress?.Invoke("Starting Auto-Fix Routine...");
-        
+
         // 1. Ensure Default Set exists
         var defaultSet = await _db.SetsEntities.FirstOrDefaultAsync(s => s.Name == "Default");
         if (defaultSet == null)
@@ -259,7 +259,7 @@ public class PKGManager
         // 4. Force a complete rebuild
         onProgress?.Invoke("Delegating to standard rebuild process...");
         await RunAsync(true, onProgress);
-        
+
         onProgress?.Invoke("Auto-Fix complete.");
     }
 
@@ -270,7 +270,7 @@ public class PKGManager
         {
             var defConfig = new ConfigEntity { Name = "Default", Default = true, Active = true };
             _db.ConfigEntities.Add(defConfig);
-            
+
             var allSets = await _db.SetsEntities.ToListAsync();
             foreach (var set in allSets)
             {
@@ -282,25 +282,25 @@ public class PKGManager
 
     public async Task SyncToSims3Async(Action<string>? onProgress = null)
     {
-        try 
+        try
         {
             onProgress?.Invoke("Syncing cache to The Sims 3 folder...");
-            
+
             string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
             if (eaDir == null) return;
-            
+
             string sims3ModsDir = Path.Combine(eaDir, "The Sims 3", "Mods");
             string sims3CacheDir = Path.Combine(sims3ModsDir, "Cache");
             string sims3ConfigDir = Path.Combine(sims3CacheDir, "Config");
-            
+
             Directory.CreateDirectory(sims3ModsDir);
             Directory.CreateDirectory(sims3CacheDir);
             Directory.CreateDirectory(sims3ConfigDir);
-            
+
             // Clean up old orphaned cache sets (any folder that no longer exists in DB)
             var allSetFolderNames = _db.SetsEntities.Select(s => s.FolderName).ToList();
             allSetFolderNames.Add("Config"); // Always keep Config
-            
+
             foreach (var dir in Directory.GetDirectories(sims3CacheDir))
             {
                 string dirName = Path.GetFileName(dir);
@@ -309,7 +309,7 @@ public class PKGManager
                     Directory.Delete(dir, true);
                 }
             }
-            
+
             // Clean up previously synced NonPackageItems (Worlds, Lots, Sims)
             string syncRecordFile = Path.Combine(_options.SetCacheFolderPath, "SyncedItems.txt");
             if (File.Exists(syncRecordFile))
@@ -323,7 +323,7 @@ public class PKGManager
                     }
                 }
             }
-            
+
             var newSyncedFiles = new List<string>();
 
             // 2. Make a Resource.cfg in Electronic Arts\The Sims 3\Mods\Cache\Config
@@ -331,12 +331,12 @@ public class PKGManager
             using (StreamWriter sw = new StreamWriter(configResourceCfg, false))
             {
                 sw.WriteLine("Priority 500");
-                
+
                 var activeConfig = await _db.ConfigEntities
                     .Include(c => c.ConfigSetsEntities)
                     .ThenInclude(cs => cs.SetsEntity)
                     .FirstOrDefaultAsync(c => c.Active);
-                
+
                 if (activeConfig != null)
                 {
                     foreach (var cs in activeConfig.ConfigSetsEntities)
@@ -346,7 +346,7 @@ public class PKGManager
                             string folderName = GetSetFolderName(cs.SetsEntity);
                             sw.WriteLine($@"PackedFile ../{folderName}/*.package");
                             sw.WriteLine($@"PackedFile ../{folderName}/*/*.package");
-                            
+
                             // Sync Non-Package items for this active set
                             string setPath = GetSetPath(cs.SetsEntity);
                             string npFile = Path.Combine(setPath, "NonPackageItems.txt");
@@ -358,7 +358,7 @@ public class PKGManager
                                     if (File.Exists(itemPath))
                                     {
                                         string destPath = "";
-                                        
+
                                         if (itemPath.EndsWith(".world", StringComparison.OrdinalIgnoreCase))
                                         {
                                             if (!string.IsNullOrWhiteSpace(_options.GameFilesDir))
@@ -374,7 +374,7 @@ public class PKGManager
                                         {
                                             destPath = Path.Combine(eaDir, "The Sims 3", "Library", Path.GetFileName(itemPath));
                                         }
-                                        
+
                                         if (!string.IsNullOrEmpty(destPath))
                                         {
                                             Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
@@ -388,21 +388,21 @@ public class PKGManager
                     }
                 }
               }
-              
+
               Directory.CreateDirectory(_options.SetCacheFolderPath);
               File.WriteAllLines(syncRecordFile, newSyncedFiles);
-              
+
               // 3. Make sure the main Resource.cfg has the scan line
             string mainResourceCfg = Path.Combine(sims3ModsDir, "Resource.cfg");
             string scanPath = "Cache/Config";
             string scanLine = $"Scan \"{scanPath}/\"";
-            
+
             if (File.Exists(mainResourceCfg))
             {
                 var lines = File.ReadAllLines(mainResourceCfg).ToList();
                 // Remove any old scan lines that point to our config, whether absolute or relative
                 lines.RemoveAll(l => l.StartsWith("Scan", StringComparison.OrdinalIgnoreCase) && l.Contains("Cache/Config", StringComparison.OrdinalIgnoreCase));
-                
+
                 // Add the clean relative scan line to the top
                 lines.Insert(0, scanLine);
                 File.WriteAllLines(mainResourceCfg, lines);
@@ -420,7 +420,7 @@ public class PKGManager
                     sw.WriteLine("PackedFile Packages/*/*/*/*/*.package");
                 }
             }
-            
+
             onProgress?.Invoke("Successfully synced to The Sims 3.");
         }
         catch (Exception ex)
@@ -445,8 +445,8 @@ public class PKGManager
     private async Task CheckOrphanPackagesAsync()
     {
         var existingFiles = await _db.MetaEntities.Select(m => m.FileName).ToListAsync();
-        
-        if (!Directory.Exists(_options.ManagedPackageFolderPath)) 
+
+        if (!Directory.Exists(_options.ManagedPackageFolderPath))
             return;
 
         var defaultSet = await _db.SetsEntities.FirstOrDefaultAsync(s => s.Name == "Default");
@@ -466,7 +466,7 @@ public class PKGManager
             if (!existingFiles.Contains(fileName))
             {
                 bool isSims3Pack = Path.GetExtension(fileName).Equals(".sims3pack", StringComparison.OrdinalIgnoreCase);
-                
+
                 var typeInfo = DetectPackageType(filePath, isSims3Pack);
 
                 var meta = new MetaEntity
@@ -494,7 +494,7 @@ public class PKGManager
     private async Task CheckSetParentingAsync()
     {
         var defaultSet = await _db.SetsEntities.FirstOrDefaultAsync(s => s.Name == "Default");
-        
+
         var allSets = await _db.SetsEntities.ToListAsync();
         foreach (var set in allSets)
         {
@@ -511,7 +511,7 @@ public class PKGManager
                 if (string.IsNullOrWhiteSpace(set.FolderName)) set.FolderName = $"Set_{set.Id}";
             }
         }
-        
+
         await _db.SaveChangesAsync();
     }
 
@@ -520,7 +520,7 @@ public class PKGManager
         var allSets = await _db.SetsEntities.Include(s => s.MetaEntities).ToListAsync();
         int total = allSets.Count;
         int current = 0;
-        
+
         foreach (var set in allSets)
         {
             current++;
@@ -544,7 +544,7 @@ public class PKGManager
     private string GetSetPath(SetsEntity activeSet)
     {
         if (activeSet == null) throw new ArgumentException("ActiveSet cannot be null");
-        
+
         string folderName = GetSetFolderName(activeSet);
 
         string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
@@ -552,7 +552,7 @@ public class PKGManager
         {
             return Path.Combine(eaDir, "The Sims 3", "Mods", "Cache", folderName);
         }
-        
+
         // Fallback
         return Path.Combine(_options.SetCacheFolderPath, "Sets", folderName);
     }
@@ -563,17 +563,17 @@ public class PKGManager
 
         string setPath = GetSetPath(activeSet);
         Directory.CreateDirectory(setPath);
-        
+
         int packageCount = 0;
         DBPFPackageBuilder? outputPkg = null;
 
         var metaEntities = activeSet.MetaEntities.ToList();
         int totalItems = metaEntities.Count;
         int currentItem = 0;
-        
+
         var addedTgis = new HashSet<TGI_Key>();
         var nonPackageItems = new List<string>();
-        
+
         foreach (var item in metaEntities)
         {
             currentItem++;
@@ -664,7 +664,7 @@ public class PKGManager
 
         string[] newFiles = Directory.GetFiles(setPath, "ModBUILD*.new");
         foreach (string path in newFiles) File.Move(path, Path.ChangeExtension(path, ".package"));
-        
+
         // Save non-package items for syncing
         string nonPackageFile = Path.Combine(setPath, "NonPackageItems.txt");
         if (nonPackageItems.Count > 0)
@@ -773,7 +773,7 @@ public class PKGManager
     private void RebuildPackage(ref DBPFPackageBuilder? outputPkg, ref int packageCount, SetsEntity activeSet, DBPFPackage package, HashSet<TGI_Key> addedTgis)
     {
         var validResources = new List<ResourceEntry>();
-        
+
         foreach (var resource in package.Resources)
         {
             if (resource.Key.Type == 3571055589u) // PTRN
@@ -790,12 +790,12 @@ public class PKGManager
                 validResources.Add(resource);
             }
         }
-        
+
         // Compress resources in parallel if enabled, but leave 1 core free so the PC remains responsive
         if (_options.CompressionLevel > 0)
         {
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) };
-            Parallel.ForEach(validResources, parallelOptions, resource => 
+            Parallel.ForEach(validResources, parallelOptions, resource =>
             {
                 resource.Compress(_options.CompressionLevel);
             });
@@ -903,17 +903,17 @@ public class PKGManager
             else
             {
                 using var package = new DBPFPackage(item.CompleteFileName);
-                var validThumbTypes = new uint[] { 
+                var validThumbTypes = new uint[] {
                     0x626F60CC, 0x626F60CD, 0x626F60CE, // Custom thumbnails (highest priority)
                     0x2E75C765, 0x2E75C764, 0x2E75C766, // Auto-generated CAS / Object thumbnails
                     0x0B202AD9, // THUM
                     0x0580A2B4, 0x0580A2B5, 0x0580A2B6 // Other UI thumbnails
                 };
-                
+
                 var res = validThumbTypes
                     .Select(typeId => package.Resources.FirstOrDefault(r => r.Key.Type == typeId))
                     .FirstOrDefault(r => r != null);
-                
+
                 if (res != null)
                 {
                     var bytes = res.Read();
@@ -991,21 +991,23 @@ public class PKGManager
                 }
                 else
                 {
-                    // Only check for Sliders, Presets, Skintones if no CASP is present in this package
-                    bool hasFaceModifier = package.Resources.Any(r => r.Key.Type == 0x0358B08A);
-                    bool hasBlendGeom = package.Resources.Any(r => r.Key.Type == 0x0355E0A6);
-                    bool hasCasSlider = package.Resources.Any(r => r.Key.Type == 0x220557DA);
-                    bool hasBoneDelta = package.Resources.Any(r => r.Key.Type == 0x00B2D882);
-                    bool hasTone = package.Resources.Any(r => r.Key.Type == 0x0166038C);
-                    bool hasPreset1 = package.Resources.Any(r => r.Key.Type == 0x051DF2DD);
-                    bool hasPreset2 = package.Resources.Any(r => r.Key.Type == 0x73E93EEB);
+                    if (package.Resources.Any(r => r.Key.Type == 0x319E4F1D))
+                    {
+                        isBuildBuy = true;
+                    }
+                    else
+                    {
+                        bool hasFaceModifier = package.Resources.Any(r => r.Key.Type == 0x0358B08A);
+                        bool hasBlendGeom = package.Resources.Any(r => r.Key.Type == 0x0355E0A6);
+                        bool hasTone = package.Resources.Any(r => r.Key.Type == 0x0166038C);
+                        bool hasPreset1 = package.Resources.Any(r => r.Key.Type == 0x051DF2DD);
+                        bool hasPreset2 = package.Resources.Any(r => r.Key.Type == 0x73E93EEB);
 
-                    if (hasTone) categories.Add("Skins");
-                    else if (hasPreset1 || hasPreset2) categories.Add("Presets");
-                    else if (hasFaceModifier || hasBlendGeom || hasCasSlider || hasBoneDelta) categories.Add("Sliders");
+                        if (hasFaceModifier || hasBlendGeom) categories.Add("Sliders");
+                        else if (hasTone) categories.Add("Skins");
+                        else if (hasPreset1) categories.Add("Presets");
+                    }
                 }
-
-                if (package.Resources.Any(r => r.Key.Type == 0x319E4F1D)) isBuildBuy = true;
             }
 
             s3p?.Dispose();
@@ -1025,15 +1027,15 @@ public class PKGManager
                 categories.Remove("Skins");
             }
 
+            if (isBuildBuy) return ("BuildBuy", "");
             if (categories.Any())
             {
                 string joined = string.Join(",", categories);
                 return ("CAS", joined);
             }
-            if (isBuildBuy) return ("BuildBuy", "");
         }
         catch { /* ignore parsing errors */ }
-        
+
         return ("Other", "");
     }
 
@@ -1053,7 +1055,7 @@ public class PKGManager
             }
 
             bool isSims3Pack = item.FileType == "TS3PACK";
-            
+
             // Fix potentially outdated relative CompleteFileName paths from old DB entries
             string expectedPath = Path.Combine(_options.ManagedPackageFolderPath, item.FileName);
             if (item.CompleteFileName != expectedPath)
@@ -1061,14 +1063,14 @@ public class PKGManager
                 item.CompleteFileName = expectedPath;
                 updatedCount++;
             }
-            
+
             // Always re-evaluate CAS and Other items to apply new improved logic
             if (string.IsNullOrEmpty(item.PackageType) || item.PackageType == "Other" || item.PackageType == "CAS")
             {
                 if (File.Exists(item.CompleteFileName))
                 {
                     var typeInfo = DetectPackageType(item.CompleteFileName, isSims3Pack);
-                    
+
                     if (item.PackageType != typeInfo.PackageType || item.CASCategories != typeInfo.CASCategories)
                     {
                         item.PackageType = typeInfo.PackageType;

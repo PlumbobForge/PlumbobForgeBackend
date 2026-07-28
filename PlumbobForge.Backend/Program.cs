@@ -2,6 +2,8 @@ using PlumbobForge.Backend.Database;
 using Microsoft.EntityFrameworkCore;
 using PlumbobForge.Backend.Configuration;
 
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+
 var builder = WebApplication.CreateBuilder(args);
 
 var appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "plumbobforge-app");
@@ -427,7 +429,7 @@ app.MapGet("/api/settings/autodetect-gamefiles", () =>
 
     foreach (var path in defaultPaths)
     {
-        if (System.IO.Directory.Exists(path) && System.IO.File.Exists(System.IO.Path.Combine(path, "Game", "Bin", "TS3W.exe")))
+        if (System.IO.Directory.Exists(path) && System.IO.Directory.Exists(System.IO.Path.Combine(path, "GameData", "Shared", "NonPackaged", "Worlds")))
         {
             return Results.Ok(new { path = path });
         }
@@ -438,7 +440,7 @@ app.MapGet("/api/settings/autodetect-gamefiles", () =>
 app.MapPost("/api/settings/validate-gamefiles", (ValidateGameFilesRequest req) =>
 {
     if (string.IsNullOrWhiteSpace(req.Path)) return Results.Ok(new { valid = false });
-    bool exists = System.IO.Directory.Exists(req.Path) && System.IO.File.Exists(System.IO.Path.Combine(req.Path, "Game", "Bin", "TS3W.exe"));
+    bool exists = System.IO.Directory.Exists(req.Path) && System.IO.Directory.Exists(System.IO.Path.Combine(req.Path, "GameData", "Shared", "NonPackaged", "Worlds"));
     return Results.Ok(new { valid = exists });
 });
 

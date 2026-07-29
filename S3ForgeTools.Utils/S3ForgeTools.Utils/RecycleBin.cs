@@ -24,7 +24,7 @@ public class RecycleBin
 		FO_RENAME
 	}
 
-	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto, Pack = 1)]
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 1)]
 	private struct SHFILEOPSTRUCT_x86
 	{
 		public IntPtr hwnd;
@@ -46,7 +46,7 @@ public class RecycleBin
 		public string lpszProgressTitle;
 	}
 
-	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 	private struct SHFILEOPSTRUCT_x64
 	{
 		public IntPtr hwnd;
@@ -68,10 +68,10 @@ public class RecycleBin
 		public string lpszProgressTitle;
 	}
 
-	[DllImport("shell32.dll", CharSet = CharSet.Auto, EntryPoint = "SHFileOperation")]
+	[DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperation")]
 	private static extern int SHFileOperation_x86(ref SHFILEOPSTRUCT_x86 FileOp);
 
-	[DllImport("shell32.dll", CharSet = CharSet.Auto, EntryPoint = "SHFileOperation")]
+	[DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperation")]
 	private static extern int SHFileOperation_x64(ref SHFILEOPSTRUCT_x64 FileOp);
 
 	private static bool IsWOW64Process()

@@ -148,7 +148,7 @@ public static class FileTools
 		return $"{FileSize / 1048576} MB";
 	}
 
-	[DllImport("Shlwapi.dll", CharSet = CharSet.Auto)]
+	[DllImport("Shlwapi.dll", CharSet = CharSet.Unicode)]
 	private static extern long StrFormatByteSize(long fileSize, [MarshalAs(UnmanagedType.LPTStr)] StringBuilder buffer, int bufferSize);
 
 	public static string FormatFileSizeAPI(long FileSize)

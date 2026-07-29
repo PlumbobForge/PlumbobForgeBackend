@@ -67,20 +67,34 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 
-    bool hasChanges = false;
-    if (!db.SetsEntities.Any(s => s.Name == "Default"))
+    var defaultSet = db.SetsEntities.FirstOrDefault(s => s.Name == "Default");
+    if (defaultSet == null)
     {
-        db.SetsEntities.Add(new PlumbobForge.Backend.Database.SetsEntity { Name = "Default", FolderName = "Default", IsDefault = true });
-        hasChanges = true;
-    }
-    
-    if (!db.ConfigEntities.Any(c => c.Name == "Default"))
-    {
-        db.ConfigEntities.Add(new PlumbobForge.Backend.Database.ConfigEntity { Name = "Default", Active = true, Default = true });
-        hasChanges = true;
+        defaultSet = new PlumbobForge.Backend.Database.SetsEntity { Name = "Default", FolderName = "Default", IsDefault = true };
+        db.SetsEntities.Add(defaultSet);
+        db.SaveChanges();
     }
 
-    if (hasChanges)
+    var defaultConfig = db.ConfigEntities.Include(c => c.ConfigSetsEntities).FirstOrDefault(c => c.Name == "Default" || c.Default);
+    if (defaultConfig == null)
+    {
+        defaultConfig = new PlumbobForge.Backend.Database.ConfigEntity { Name = "Default", Active = true, Default = true };
+        db.ConfigEntities.Add(defaultConfig);
+        db.SaveChanges();
+    }
+
+    var allSets = db.SetsEntities.ToList();
+    var existingSetIds = defaultConfig.ConfigSetsEntities.Select(cs => cs.SetsEntityId).ToHashSet();
+    bool linkedAny = false;
+    foreach (var set in allSets)
+    {
+        if (!existingSetIds.Contains(set.Id))
+        {
+            db.ConfigSetsEntities.Add(new PlumbobForge.Backend.Database.ConfigSetsEntity { ConfigEntityId = defaultConfig.Id, SetsEntityId = set.Id });
+            linkedAny = true;
+        }
+    }
+    if (linkedAny)
     {
         db.SaveChanges();
     }
@@ -273,7 +287,23 @@ app.MapPost("/api/configurations", async (AppDbContext db, HttpContext ctx) =>
     var config = new ConfigEntity { Name = "New Configuration", Active = false, Default = false };
     db.ConfigEntities.Add(config);
     await db.SaveChangesAsync();
-    return Results.Ok(config);
+
+    // Enable all existing sets by default in the new configuration
+    var allSets = await db.SetsEntities.ToListAsync();
+    foreach (var set in allSets)
+    {
+        config.ConfigSetsEntities.Add(new ConfigSetsEntity { ConfigEntityId = config.Id, SetsEntityId = set.Id });
+    }
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        config.Id,
+        config.Name,
+        config.Default,
+        config.Active,
+        SetIds = config.ConfigSetsEntities.Select(cs => cs.SetsEntityId).ToList()
+    });
 });
 
 app.MapDelete("/api/configurations/{id}", async (long id, AppDbContext db) =>
@@ -505,6 +535,24 @@ app.MapPost("/api/sets", async (AppDbContext db, HttpContext context) =>
 
     db.SetsEntities.Add(dto);
     await db.SaveChangesAsync();
+
+    // Enable new set by default in the Default configuration
+    var defaultConfig = await db.ConfigEntities
+        .Include(c => c.ConfigSetsEntities)
+        .FirstOrDefaultAsync(c => c.Default);
+
+    if (defaultConfig != null && !defaultConfig.ConfigSetsEntities.Any(cs => cs.SetsEntityId == dto.Id))
+    {
+        db.ConfigSetsEntities.Add(new ConfigSetsEntity { ConfigEntityId = defaultConfig.Id, SetsEntityId = dto.Id });
+        await db.SaveChangesAsync();
+
+        if (defaultConfig.Active)
+        {
+            var manager = context.RequestServices.GetRequiredService<PlumbobForge.Backend.Services.PKGManager>();
+            await manager.SyncToSims3Async();
+        }
+    }
+
     return Results.Ok(dto);
 });
 
@@ -590,6 +638,9 @@ app.MapDelete("/api/sets/{id}", async (long id, bool deleteItems, AppDbContext d
 
     db.SetsEntities.RemoveRange(setsToDelete);
     await db.SaveChangesAsync();
+
+    var manager = context.RequestServices.GetRequiredService<PlumbobForge.Backend.Services.PKGManager>();
+    await manager.SyncToSims3Async();
 
     return Results.Ok(new { message = $"Deleted {setsToDelete.Count} sets and handled {itemsInSets.Count} items." });
 });

@@ -37,10 +37,10 @@ public class PKGManager
             await CheckOrphanPackagesAsync();
             onProgress?.Invoke("Validating set hierarchy...");
             await CheckSetParentingAsync();
-            onProgress?.Invoke("Scanning cache requirements...");
-            await RebuildCacheAsync(false, onProgress);
             onProgress?.Invoke("Initializing configuration profile...");
             await CheckConfigurationsAsync();
+            onProgress?.Invoke("Scanning cache requirements...");
+            await RebuildCacheAsync(false, onProgress);
             await SyncToSims3Async(onProgress);
             onProgress?.Invoke("Scan complete.");
         }
@@ -85,6 +85,8 @@ public class PKGManager
             {
                 onProgress?.Invoke($"Imported {movedCount} files to Library. Registering in database...");
                 await CheckOrphanPackagesAsync();
+                await CheckConfigurationsAsync();
+                await SyncToSims3Async(onProgress);
                 onProgress?.Invoke("Import complete.");
             }
             else
@@ -134,6 +136,8 @@ public class PKGManager
             {
                 onProgress?.Invoke($"Imported {movedCount} files to Library. Registering in database...");
                 await CheckOrphanPackagesAsync();
+                await CheckConfigurationsAsync();
+                await SyncToSims3Async(onProgress);
                 onProgress?.Invoke("Import complete.");
             }
             else
@@ -991,17 +995,22 @@ public class PKGManager
                 }
                 else
                 {
+                    // Check for BuildBuy (OBJD) first — many of the CAS-like resource types
+                    // (0x73E93EEB, 0x220557DA, 0x00B2D882) also appear in build-buy objects
                     if (package.Resources.Any(r => r.Key.Type == 0x319E4F1D))
                     {
                         isBuildBuy = true;
                     }
                     else
                     {
+                        // Only check for Sliders, Presets, Skintones if no CASP and no OBJD.
+                        // Note: 0x0166038C appears in sliders too (as a reference), so sliders
+                        // must be checked first — if Face Modifier or Blend Geometry is present,
+                        // it's a slider regardless of whether 0x0166038C is also present.
                         bool hasFaceModifier = package.Resources.Any(r => r.Key.Type == 0x0358B08A);
                         bool hasBlendGeom = package.Resources.Any(r => r.Key.Type == 0x0355E0A6);
                         bool hasTone = package.Resources.Any(r => r.Key.Type == 0x0166038C);
                         bool hasPreset1 = package.Resources.Any(r => r.Key.Type == 0x051DF2DD);
-                        bool hasPreset2 = package.Resources.Any(r => r.Key.Type == 0x73E93EEB);
 
                         if (hasFaceModifier || hasBlendGeom) categories.Add("Sliders");
                         else if (hasTone) categories.Add("Skins");

@@ -161,13 +161,24 @@ app.MapPost("/api/scan", async (HttpContext ctx, PlumbobForge.Backend.Services.P
 
     Action<string> onProgress = (msg) =>
     {
-        ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
-        ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        try
+        {
+            ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
+            ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        }
+        catch { }
     };
 
-    await manager.RunAsync(true, onProgress);
-    await ctx.Response.WriteAsync("data: DONE\n\n");
-    await ctx.Response.Body.FlushAsync();
+    try
+    {
+        await manager.RunAsync(true, onProgress);
+    }
+    catch (Exception ex)
+    {
+        onProgress($"Error: {ex.Message}");
+    }
+
+    onProgress("DONE");
 });
 
 app.MapPost("/api/import-files", async (HttpContext ctx, PlumbobForge.Backend.Services.PKGManager manager) =>
@@ -180,16 +191,27 @@ app.MapPost("/api/import-files", async (HttpContext ctx, PlumbobForge.Backend.Se
 
     Action<string> onProgress = (msg) =>
     {
-        ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
-        ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        try
+        {
+            ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
+            ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        }
+        catch { }
     };
 
-    if (filePaths != null && filePaths.Length > 0)
+    try
     {
-        await manager.ImportFilesAsync(filePaths, onProgress);
+        if (filePaths != null && filePaths.Length > 0)
+        {
+            await manager.ImportFilesAsync(filePaths, onProgress);
+        }
     }
-    await ctx.Response.WriteAsync("data: DONE\n\n");
-    await ctx.Response.Body.FlushAsync();
+    catch (Exception ex)
+    {
+        onProgress($"Error: {ex.Message}");
+    }
+
+    onProgress("DONE");
 });
 
 app.MapPost("/api/upload-files", async (HttpContext ctx, PlumbobForge.Backend.Services.PKGManager manager) =>
@@ -198,8 +220,12 @@ app.MapPost("/api/upload-files", async (HttpContext ctx, PlumbobForge.Backend.Se
 
     Action<string> onProgress = (msg) =>
     {
-        ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
-        ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        try
+        {
+            ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
+            ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        }
+        catch { }
     };
 
     try
@@ -215,8 +241,7 @@ app.MapPost("/api/upload-files", async (HttpContext ctx, PlumbobForge.Backend.Se
         onProgress($"CRASH: {ex.Message}");
     }
 
-    await ctx.Response.WriteAsync("data: DONE\n\n");
-    await ctx.Response.Body.FlushAsync();
+    onProgress("DONE");
 }).DisableAntiforgery();
 
 app.MapPost("/api/import-downloads", async (HttpContext ctx, PlumbobForge.Backend.Services.PKGManager manager) =>
@@ -225,13 +250,24 @@ app.MapPost("/api/import-downloads", async (HttpContext ctx, PlumbobForge.Backen
 
     Action<string> onProgress = (msg) =>
     {
-        ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
-        ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        try
+        {
+            ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
+            ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        }
+        catch { }
     };
 
-    await manager.ImportFromDownloadsAsync(onProgress);
-    await ctx.Response.WriteAsync("data: DONE\n\n");
-    await ctx.Response.Body.FlushAsync();
+    try
+    {
+        await manager.ImportFromDownloadsAsync(onProgress);
+    }
+    catch (Exception ex)
+    {
+        onProgress($"Error: {ex.Message}");
+    }
+
+    onProgress("DONE");
 });
 
 app.MapPost("/api/fix", async (HttpContext ctx, PlumbobForge.Backend.Services.PKGManager manager) =>
@@ -240,13 +276,24 @@ app.MapPost("/api/fix", async (HttpContext ctx, PlumbobForge.Backend.Services.PK
 
     Action<string> onProgress = (msg) =>
     {
-        ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
-        ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        try
+        {
+            ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
+            ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        }
+        catch { }
     };
 
-    await manager.AutoFixAsync(onProgress);
-    await ctx.Response.WriteAsync("data: DONE\n\n");
-    await ctx.Response.Body.FlushAsync();
+    try
+    {
+        await manager.AutoFixAsync(onProgress);
+    }
+    catch (Exception ex)
+    {
+        onProgress($"Error: {ex.Message}");
+    }
+
+    onProgress("DONE");
 });
 
 app.MapPost("/api/settings/recheck-types", async (HttpContext ctx, PlumbobForge.Backend.Services.PKGManager manager) =>
@@ -255,13 +302,24 @@ app.MapPost("/api/settings/recheck-types", async (HttpContext ctx, PlumbobForge.
 
     Action<string> onProgress = (msg) =>
     {
-        ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
-        ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        try
+        {
+            ctx.Response.WriteAsync($"data: {msg}\n\n").GetAwaiter().GetResult();
+            ctx.Response.Body.FlushAsync().GetAwaiter().GetResult();
+        }
+        catch { }
     };
 
-    await manager.RecheckPackageTypesAsync(onProgress);
-    await ctx.Response.WriteAsync("data: DONE\n\n");
-    await ctx.Response.Body.FlushAsync();
+    try
+    {
+        await manager.RecheckPackageTypesAsync(onProgress);
+    }
+    catch (Exception ex)
+    {
+        onProgress($"Error: {ex.Message}");
+    }
+
+    onProgress("DONE");
 });
 
 app.MapGet("/api/configurations", async (AppDbContext db) =>
@@ -579,8 +637,46 @@ app.MapPut("/api/sets/{id}", async (long id, AppDbContext db, HttpContext contex
     var set = await db.SetsEntities.FindAsync(id);
     if (set == null) return Results.NotFound();
 
-    set.Name = payload["name"].Trim();
+    var manager = context.RequestServices.GetRequiredService<PlumbobForge.Backend.Services.PKGManager>();
+
+    // Compute old and new folder paths before renaming
+    string oldFolderName = set.FolderName ?? set.Name;
+    string newName = payload["name"].Trim();
+    var invalidChars = Path.GetInvalidFileNameChars();
+    string newFolderName = new string(newName.Where(c => !invalidChars.Contains(c)).ToArray());
+    if (string.IsNullOrWhiteSpace(newFolderName)) newFolderName = $"Set_{set.Id}";
+
+    // Rename the cache folder on disk if it exists
+    string oldCachePath = manager.GetSetCachePath(oldFolderName);
+    string newCachePath = manager.GetSetCachePath(newFolderName);
+    if (Directory.Exists(oldCachePath) && oldCachePath != newCachePath)
+    {
+        try
+        {
+            // If the destination already exists (e.g. from a previous rename), merge by moving contents
+            if (Directory.Exists(newCachePath))
+            {
+                foreach (var file in Directory.GetFiles(oldCachePath))
+                {
+                    string dest = Path.Combine(newCachePath, Path.GetFileName(file));
+                    try { File.Move(file, dest, overwrite: true); } catch { }
+                }
+                try { Directory.Delete(oldCachePath, true); } catch { }
+            }
+            else
+            {
+                Directory.Move(oldCachePath, newCachePath);
+            }
+        }
+        catch { /* Best-effort rename; sync will correct it */ }
+    }
+
+    set.Name = newName;
+    set.FolderName = newFolderName;
     await db.SaveChangesAsync();
+
+    await manager.SyncToSims3Async();
+
     return Results.Ok(set);
 });
 

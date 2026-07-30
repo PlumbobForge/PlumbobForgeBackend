@@ -33,16 +33,37 @@ public class PKGManager
         }
         else
         {
-            onProgress?.Invoke("Checking for new orphan packages...");
-            await CheckOrphanPackagesAsync();
-            onProgress?.Invoke("Validating set hierarchy...");
-            await CheckSetParentingAsync();
-            onProgress?.Invoke("Initializing configuration profile...");
-            await CheckConfigurationsAsync();
-            onProgress?.Invoke("Scanning cache requirements...");
-            await RebuildCacheAsync(false, onProgress);
-            await SyncToSims3Async(onProgress);
-            onProgress?.Invoke("Scan complete.");
+            try
+            {
+                var skippedFiles = new List<(string FileName, string Reason)>();
+
+                onProgress?.Invoke("Checking for new orphan packages...");
+                await CheckOrphanPackagesAsync();
+                onProgress?.Invoke("Validating set hierarchy...");
+                await CheckSetParentingAsync();
+                onProgress?.Invoke("Initializing configuration profile...");
+                await CheckConfigurationsAsync();
+                onProgress?.Invoke("Scanning cache requirements...");
+                await RebuildCacheAsync(false, onProgress, skippedFiles);
+                await SyncToSims3Async(onProgress);
+
+                if (skippedFiles.Count > 0)
+                {
+                    onProgress?.Invoke($"⚠ Rebuilding partially completed. {skippedFiles.Count} file(s) were skipped:");
+                    foreach (var (fileName, reason) in skippedFiles)
+                    {
+                        onProgress?.Invoke($"  - {fileName}: {reason}");
+                    }
+                }
+                else
+                {
+                    onProgress?.Invoke("Scan complete.");
+                }
+            }
+            catch (Exception ex)
+            {
+                onProgress?.Invoke($"Error during rebuild: {ex.Message}");
+            }
         }
     }
 
@@ -519,7 +540,7 @@ public class PKGManager
         await _db.SaveChangesAsync();
     }
 
-    private async Task RebuildCacheAsync(bool forceRebuild = false, Action<string>? onProgress = null)
+    private async Task RebuildCacheAsync(bool forceRebuild = false, Action<string>? onProgress = null, List<(string FileName, string Reason)>? skippedFiles = null)
     {
         var allSets = await _db.SetsEntities.Include(s => s.MetaEntities).ToListAsync();
         int total = allSets.Count;
@@ -531,7 +552,7 @@ public class PKGManager
             if (forceRebuild || set.Dirty)
             {
                 onProgress?.Invoke($"Rebuilding cache for set: {set.Name} ({current}/{total})...");
-                RebuildSet(set, onProgress);
+                RebuildSet(set, onProgress, skippedFiles);
             }
         }
     }
@@ -561,7 +582,17 @@ public class PKGManager
         return Path.Combine(_options.SetCacheFolderPath, "Sets", folderName);
     }
 
-    private void RebuildSet(SetsEntity activeSet, Action<string>? onProgress = null)
+    public string GetSetCachePath(string folderName)
+    {
+        string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
+        if (!string.IsNullOrEmpty(eaDir))
+        {
+            return Path.Combine(eaDir, "The Sims 3", "Mods", "Cache", folderName);
+        }
+        return Path.Combine(_options.SetCacheFolderPath, "Sets", folderName);
+    }
+
+    private void RebuildSet(SetsEntity activeSet, Action<string>? onProgress = null, List<(string FileName, string Reason)>? skippedFiles = null)
     {
         if (activeSet.IsLegacy) return;
 
@@ -587,7 +618,12 @@ public class PKGManager
             }
             if (!item.Enabled) continue;
 
-            if (!File.Exists(item.CompleteFileName)) continue;
+            if (!File.Exists(item.CompleteFileName))
+            {
+                skippedFiles?.Add((item.FileName, "File not found on disk"));
+                onProgress?.Invoke($"Skipping missing file '{item.FileName}'");
+                continue;
+            }
 
             if (!item.FileName.ToLower().EndsWith(".sims3pack"))
             {
@@ -596,92 +632,140 @@ public class PKGManager
                 {
                     dbpfPackage = new DBPFPackage(item.CompleteFileName);
                 }
-                catch (InvalidDataException)
+                catch (Exception ex)
                 {
+                    skippedFiles?.Add((item.FileName, ex.Message));
+                    onProgress?.Invoke($"Skipping unreadable file '{item.FileName}': {ex.Message}");
                     continue;
                 }
 
                 if (dbpfPackage != null)
                 {
-                    string originalName = Path.GetFileNameWithoutExtension(item.FileName);
-                    if (dbpfPackage.Resources.Any(r => r.Key.Type == 107542056)) // World
+                    try
                     {
-                        string path = InstallAsWorld(dbpfPackage, originalName, nonPackageItems);
-                        if (path != null) nonPackageItems.Add(path);
+                        string originalName = Path.GetFileNameWithoutExtension(item.FileName);
+                        if (dbpfPackage.Resources.Any(r => r.Key.Type == 107542056)) // World
+                        {
+                            string path = InstallAsWorld(dbpfPackage, originalName, nonPackageItems);
+                            if (path != null) nonPackageItems.Add(path);
+                        }
+                        else if (dbpfPackage.Resources.Any(r => r.Key.Type == 3496170587u)) // Lot
+                        {
+                            string path = InstallAsLot(dbpfPackage, originalName, nonPackageItems);
+                            if (path != null) nonPackageItems.Add(path);
+                        }
+                        else if (dbpfPackage.Resources.Any(r => r.Key.Type == 83396964)) // Sim
+                        {
+                            string path = InstallAsSim(dbpfPackage, originalName, nonPackageItems);
+                            if (path != null) nonPackageItems.Add(path);
+                        }
+                        else if (ValidatePackage(dbpfPackage))
+                        {
+                            RebuildPackage(ref outputPkg, ref packageCount, activeSet, dbpfPackage, addedTgis);
+                        }
+                        else
+                        {
+                            skippedFiles?.Add((item.FileName, "Failed validation (possible corrupt data)"));
+                            onProgress?.Invoke($"Skipping invalid package '{item.FileName}'");
+                        }
                     }
-                    else if (dbpfPackage.Resources.Any(r => r.Key.Type == 3496170587u)) // Lot
+                    catch (Exception ex)
                     {
-                        string path = InstallAsLot(dbpfPackage, originalName, nonPackageItems);
-                        if (path != null) nonPackageItems.Add(path);
+                        skippedFiles?.Add((item.FileName, ex.Message));
+                        onProgress?.Invoke($"Error processing package '{item.FileName}': {ex.Message}");
                     }
-                    else if (dbpfPackage.Resources.Any(r => r.Key.Type == 83396964)) // Sim
+                    finally
                     {
-                        string path = InstallAsSim(dbpfPackage, originalName, nonPackageItems);
-                        if (path != null) nonPackageItems.Add(path);
+                        try { dbpfPackage.Close(); } catch { }
                     }
-                    else if (ValidatePackage(dbpfPackage))
-                    {
-                        RebuildPackage(ref outputPkg, ref packageCount, activeSet, dbpfPackage, addedTgis);
-                    }
-                    dbpfPackage.Close();
                 }
             }
             else
             {
-                Sims3Pack sims3Pack = new Sims3Pack(item.CompleteFileName);
-                string originalName = Path.GetFileNameWithoutExtension(item.FileName);
-                foreach (DBPFPackage package in sims3Pack.Packages)
+                try
                 {
-                    if (package.Resources.Any(r => r.Key.Type == 107542056)) // World
+                    using (Sims3Pack sims3Pack = new Sims3Pack(item.CompleteFileName))
                     {
-                        string path = InstallAsWorld(package, originalName, nonPackageItems);
-                        if (path != null) nonPackageItems.Add(path);
-                    }
-                    else if (package.Resources.Any(r => r.Key.Type == 3496170587u)) // Lot
-                    {
-                        string path = InstallAsLot(package, originalName, nonPackageItems);
-                        if (path != null) nonPackageItems.Add(path);
-                    }
-                    else if (package.Resources.Any(r => r.Key.Type == 83396964)) // Sim
-                    {
-                        string path = InstallAsSim(package, originalName, nonPackageItems);
-                        if (path != null) nonPackageItems.Add(path);
-                    }
-                    else if (ValidatePackage(package))
-                    {
-                        RebuildPackage(ref outputPkg, ref packageCount, activeSet, package, addedTgis);
+                        string originalName = Path.GetFileNameWithoutExtension(item.FileName);
+                        foreach (DBPFPackage package in sims3Pack.Packages)
+                        {
+                            if (package.Resources.Any(r => r.Key.Type == 107542056)) // World
+                            {
+                                string path = InstallAsWorld(package, originalName, nonPackageItems);
+                                if (path != null) nonPackageItems.Add(path);
+                            }
+                            else if (package.Resources.Any(r => r.Key.Type == 3496170587u)) // Lot
+                            {
+                                string path = InstallAsLot(package, originalName, nonPackageItems);
+                                if (path != null) nonPackageItems.Add(path);
+                            }
+                            else if (package.Resources.Any(r => r.Key.Type == 83396964)) // Sim
+                            {
+                                string path = InstallAsSim(package, originalName, nonPackageItems);
+                                if (path != null) nonPackageItems.Add(path);
+                            }
+                            else if (ValidatePackage(package))
+                            {
+                                RebuildPackage(ref outputPkg, ref packageCount, activeSet, package, addedTgis);
+                            }
+                            else
+                            {
+                                skippedFiles?.Add((item.FileName, "Failed validation (possible corrupt data)"));
+                                onProgress?.Invoke($"Skipping invalid package in Sims3Pack '{item.FileName}'");
+                            }
+                        }
                     }
                 }
-                sims3Pack.Close();
+                catch (Exception ex)
+                {
+                    skippedFiles?.Add((item.FileName, ex.Message));
+                    onProgress?.Invoke($"Skipping unreadable Sims3Pack '{item.FileName}': {ex.Message}");
+                }
             }
         }
 
         if (outputPkg != null)
         {
-            outputPkg.Close();
+            try { outputPkg.Close(); } catch { }
             outputPkg = null;
         }
 
         // Clean up old rebuilds
-        string[] oldFiles = Directory.GetFiles(setPath, "ModBUILD*.package");
-        foreach (string path in oldFiles) File.Delete(path);
+        try
+        {
+            string[] oldFiles = Directory.GetFiles(setPath, "ModBUILD*.package");
+            foreach (string path in oldFiles)
+            {
+                try { File.Delete(path); } catch { }
+            }
 
-        string[] newFiles = Directory.GetFiles(setPath, "ModBUILD*.new");
-        foreach (string path in newFiles) File.Move(path, Path.ChangeExtension(path, ".package"));
+            string[] newFiles = Directory.GetFiles(setPath, "ModBUILD*.new");
+            foreach (string path in newFiles)
+            {
+                try
+                {
+                    string dest = Path.ChangeExtension(path, ".package");
+                    if (File.Exists(dest)) File.Delete(dest);
+                    File.Move(path, dest);
+                }
+                catch { }
+            }
+        }
+        catch { }
 
         // Save non-package items for syncing
         string nonPackageFile = Path.Combine(setPath, "NonPackageItems.txt");
         if (nonPackageItems.Count > 0)
         {
-            File.WriteAllLines(nonPackageFile, nonPackageItems);
+            try { File.WriteAllLines(nonPackageFile, nonPackageItems); } catch { }
         }
         else if (File.Exists(nonPackageFile))
         {
-            File.Delete(nonPackageFile);
+            try { File.Delete(nonPackageFile); } catch { }
         }
 
         activeSet.Dirty = false;
-        _db.SaveChanges();
+        try { _db.SaveChanges(); } catch { }
     }
 
     private string GetTS3FolderPath(string folderName, string fileName)

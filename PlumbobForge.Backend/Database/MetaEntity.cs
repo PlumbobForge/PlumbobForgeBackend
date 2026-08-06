@@ -20,6 +20,11 @@ public class MetaEntity
     public string? InstallDate { get; set; }
     public string? Manifest { get; set; }
     public string? CASCategories { get; set; }
+    public string? CASAge { get; set; }
+    public string? CASGender { get; set; }
+    public string? CASOutfitCategory { get; set; }
+    public bool IsUserTagged { get; set; } = false;
+    public string? UserTags { get; set; }
 
     public long? SetsEntityId { get; set; }
     public SetsEntity? SetsEntity { get; set; }

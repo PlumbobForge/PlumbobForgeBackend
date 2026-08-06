@@ -171,8 +171,7 @@ public class DBPFPackage : IDisposable
 		uint num16 = binaryReader.ReadUInt32();
 		if (num != 2 || num2 != 0)
 		{
-			log.Warn($"Unknown DBPF Version {num}.{num2}, Expected 2.0 -- {FileName}");
-			throw new InvalidDataException($"Unknown File Version: {num}.{num2}, Expected 2.0");
+			log.Warn($"Non-standard DBPF Version {num}.{num2} -- attempting to parse package -- {FileName}");
 		}
 		if ((num8 != 0 && num8 != 7) || num15 != 3)
 		{

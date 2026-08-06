@@ -34,9 +34,16 @@ internal static class Compression
 		{
 			throw new InvalidDataException(string.Format("Resource data indicates size does not match index at 0x{0}.  Read 0x{1}.  Expected 0x{2}.", stream.Position.ToString("X8"), num3.ToString("X8"), memsize.ToString("X8")));
 		}
-		while (stream.Position < num)
+		try
 		{
-			Dechunk(stream, binaryWriter);
+			while (stream.Position < num)
+			{
+				Dechunk(stream, binaryWriter, memsize);
+			}
+		}
+		catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException or ArgumentException or NotSupportedException)
+		{
+			throw new InvalidDataException($"Decompression failed: {ex.Message}", ex);
 		}
 		if (checking && binaryWriter.BaseStream.Position != memsize)
 		{
@@ -46,7 +53,7 @@ internal static class Compression
 		return array;
 	}
 
-	public static void Dechunk(Stream stream, BinaryWriter bw)
+	public static void Dechunk(Stream stream, BinaryWriter bw, int memsize)
 	{
 		BinaryReader binaryReader = new BinaryReader(stream);
 		int num = 0;
@@ -103,13 +110,21 @@ internal static class Compression
 		{
 			throw new InvalidDataException($"Invalid copy offset 0x{num2:X8} at {stream.Position}.");
 		}
-		if (num < num2 && num2 > 8)
+		// Bounds safety: skip copy if offset would go before start or write past buffer
+		if (num > 0 && num2 > 0)
 		{
-			CopyA(bw.BaseStream, num2, num);
-		}
-		else
-		{
-			CopyB(bw.BaseStream, num2, num);
+			if (num2 > bw.BaseStream.Position || bw.BaseStream.Position + num > memsize)
+			{
+				throw new IndexOutOfRangeException($"Decompression copy out of bounds: offset={num2}, len={num}, pos={bw.BaseStream.Position}, memsize={memsize}");
+			}
+			if (num < num2 && num2 > 8)
+			{
+				CopyA(bw.BaseStream, num2, num);
+			}
+			else
+			{
+				CopyB(bw.BaseStream, num2, num);
+			}
 		}
 	}
 

@@ -15,6 +15,10 @@ public class PlumbobForgeOptions
     public string GameFilesDir { get; set; } = "";
     public int CompressionLevel { get; set; } = 1;
     public bool HasSeenWalkthrough { get; set; } = false;
+    public string Language { get; set; } = "auto";
+    public string Theme { get; set; } = "auto";
+    public string CacheMethod { get; set; } = "Dynamic";
+    public System.Collections.Generic.List<string> ObservedFolders { get; set; } = new();
 
     public string DownloadFolderPath => string.IsNullOrEmpty(DownloadFolderName) ? "" : System.IO.Path.Combine(DocumentBaseDir, DownloadFolderName);
     public string ArchiveFolderPath => string.IsNullOrEmpty(ArchiveFolderName) ? "" : System.IO.Path.Combine(DocumentBaseDir, ArchiveFolderName);

@@ -27,7 +27,10 @@ builder.Services.Configure<PlumbobForgeOptions>(
     builder.Configuration.GetSection(PlumbobForgeOptions.SectionName));
 
 // Add services to the container.
+builder.Services.AddSingleton<PlumbobForge.Backend.Services.NotificationService>();
+builder.Services.AddScoped<PlumbobForge.Backend.Services.LocalizationService>();
 builder.Services.AddScoped<PlumbobForge.Backend.Services.PKGManager>();
+builder.Services.AddHostedService<PlumbobForge.Backend.Services.DownloadsWatcherService>();
 
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
 {
@@ -54,9 +57,12 @@ builder.Services.AddCors(options =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite($"Data Source={Path.Combine(appDataPath, "plumbobforge.db")}"));
 
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+// Swagger/OpenAPI registered only in Development mode to avoid reflection scanning overhead in Production
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
+}
 
 var app = builder.Build();
 
@@ -65,66 +71,85 @@ app.UseCors("AllowFrontend");
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();
+    await db.Database.MigrateAsync();
 
-    var defaultSet = db.SetsEntities.FirstOrDefault(s => s.Name == "Default");
+    // Enable Write-Ahead Logging (WAL) for faster SQLite operations
+    try { await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"); } catch { }
+
+    var defaultSet = await db.SetsEntities.FirstOrDefaultAsync(s => s.Name == "Default");
     if (defaultSet == null)
     {
         defaultSet = new PlumbobForge.Backend.Database.SetsEntity { Name = "Default", FolderName = "Default", IsDefault = true };
         db.SetsEntities.Add(defaultSet);
-        db.SaveChanges();
+        await db.SaveChangesAsync();
     }
 
-    var defaultConfig = db.ConfigEntities.Include(c => c.ConfigSetsEntities).FirstOrDefault(c => c.Name == "Default" || c.Default);
+    var defaultConfig = await db.ConfigEntities.Include(c => c.ConfigSetsEntities).FirstOrDefaultAsync(c => c.Name == "Default" || c.Default);
     if (defaultConfig == null)
     {
         defaultConfig = new PlumbobForge.Backend.Database.ConfigEntity { Name = "Default", Active = true, Default = true };
         db.ConfigEntities.Add(defaultConfig);
-        db.SaveChanges();
-    }
+        await db.SaveChangesAsync();
 
-    var allSets = db.SetsEntities.ToList();
-    var existingSetIds = defaultConfig.ConfigSetsEntities.Select(cs => cs.SetsEntityId).ToHashSet();
-    bool linkedAny = false;
-    foreach (var set in allSets)
-    {
-        if (!existingSetIds.Contains(set.Id))
+        var allSets = await db.SetsEntities.ToListAsync();
+        foreach (var set in allSets)
         {
             db.ConfigSetsEntities.Add(new PlumbobForge.Backend.Database.ConfigSetsEntity { ConfigEntityId = defaultConfig.Id, SetsEntityId = set.Id });
-            linkedAny = true;
         }
-    }
-    if (linkedAny)
-    {
-        db.SaveChanges();
+        await db.SaveChangesAsync();
     }
 
     var options = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptionsSnapshot<PlumbobForgeOptions>>().Value;
     if (string.IsNullOrWhiteSpace(options.DocumentBaseDir))
     {
-        var appSettingsFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "plumbobforge-app", "appsettings.json");
-        if (System.IO.File.Exists(appSettingsFile))
-        {
-            var jsonText = System.IO.File.ReadAllText(appSettingsFile);
-            var jObject = System.Text.Json.Nodes.JsonNode.Parse(jsonText) as System.Text.Json.Nodes.JsonObject;
-            if (jObject != null)
-            {
-                var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                var basePath = Path.Combine(docs, "PlumbobForge");
-                
-                var ccMagicNode = jObject["PlumbobForge"] as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
-                ccMagicNode["DocumentBaseDir"] = basePath;
-                ccMagicNode["ManagedPackageFolderName"] = "Library";
-                ccMagicNode["SetCacheFolderName"] = "Builds";
-                
-                jObject["PlumbobForge"] = ccMagicNode;
-                var serializerOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-                System.IO.File.WriteAllText(appSettingsFile, jObject.ToJsonString(serializerOptions));
+        var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var basePath = Path.Combine(docs, "PlumbobForge");
 
-                options.DocumentBaseDir = basePath;
-                options.ManagedPackageFolderName = "Library";
-                options.SetCacheFolderName = "Builds";
+        if (System.IO.File.Exists(appSettingsPath))
+        {
+            try
+            {
+                var jsonText = await System.IO.File.ReadAllTextAsync(appSettingsPath);
+                var jObject = System.Text.Json.Nodes.JsonNode.Parse(jsonText) as System.Text.Json.Nodes.JsonObject;
+                if (jObject != null)
+                {
+                    var ccMagicNode = jObject["PlumbobForge"] as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                    ccMagicNode["DocumentBaseDir"] = basePath;
+                    ccMagicNode["ManagedPackageFolderName"] = "Library";
+                    ccMagicNode["SetCacheFolderName"] = "Builds";
+
+                    jObject["PlumbobForge"] = ccMagicNode;
+                    var serializerOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                    await System.IO.File.WriteAllTextAsync(appSettingsPath, jObject.ToJsonString(serializerOptions));
+                }
             }
+            catch { }
+        }
+
+        options.DocumentBaseDir = basePath;
+        options.ManagedPackageFolderName = "Library";
+        options.SetCacheFolderName = "Builds";
+    }
+
+    // Re-derive all MetaEntity.CompleteFileName paths from current DocumentBaseDir
+    // This handles the case where the user manually moved the PlumbobForge folder
+    if (!string.IsNullOrWhiteSpace(options.ManagedPackageFolderName))
+    {
+        var managedPath = Path.Combine(options.DocumentBaseDir, options.ManagedPackageFolderName);
+        var allItems = await db.MetaEntities.ToListAsync();
+        bool anyChanged = false;
+        foreach (var item in allItems)
+        {
+            var expectedPath = Path.Combine(managedPath, item.FileName);
+            if (!string.Equals(item.CompleteFileName, expectedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                item.CompleteFileName = expectedPath;
+                anyChanged = true;
+            }
+        }
+        if (anyChanged)
+        {
+            await db.SaveChangesAsync();
         }
     }
 }
@@ -181,11 +206,58 @@ app.MapPost("/api/scan", async (HttpContext ctx, PlumbobForge.Backend.Services.P
     onProgress("DONE");
 });
 
+app.MapPost("/api/import/check-duplicates", async (HttpContext ctx, PlumbobForge.Backend.Services.PKGManager manager) =>
+{
+    if (ctx.Request.HasFormContentType)
+    {
+        var form = await ctx.Request.ReadFormAsync();
+        var duplicates = manager.CheckFormDuplicates(form.Files);
+        return Results.Ok(new { hasDuplicates = duplicates.Count > 0, duplicates });
+    }
+    else
+    {
+        using var reader = new System.IO.StreamReader(ctx.Request.Body);
+        var body = await reader.ReadToEndAsync();
+        List<string>? fileNames = null;
+        try
+        {
+            var reqObj = System.Text.Json.JsonSerializer.Deserialize<CheckDuplicatesRequest>(body, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            fileNames = reqObj?.FileNames?.ToList();
+        }
+        catch { }
+        fileNames ??= new List<string>();
+        var duplicates = manager.GetDuplicateFiles(fileNames);
+        return Results.Ok(new { hasDuplicates = duplicates.Count > 0, duplicates });
+    }
+}).DisableAntiforgery();
+
 app.MapPost("/api/import-files", async (HttpContext ctx, PlumbobForge.Backend.Services.PKGManager manager) =>
 {
     using var reader = new System.IO.StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
-    var filePaths = System.Text.Json.JsonSerializer.Deserialize<string[]>(body);
+    
+    string[]? filePaths = null;
+    string duplicateAction = "rename";
+    long? targetSetId = null;
+
+    try
+    {
+        var reqObj = System.Text.Json.JsonSerializer.Deserialize<ImportFilesRequest>(body, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        if (reqObj != null && reqObj.FilePaths != null)
+        {
+            filePaths = reqObj.FilePaths;
+            duplicateAction = reqObj.DuplicateAction ?? "rename";
+            targetSetId = reqObj.TargetSetId;
+        }
+        else
+        {
+            filePaths = System.Text.Json.JsonSerializer.Deserialize<string[]>(body);
+        }
+    }
+    catch
+    {
+        filePaths = System.Text.Json.JsonSerializer.Deserialize<string[]>(body);
+    }
 
     ctx.Response.Headers.Append("Content-Type", "text/event-stream");
 
@@ -203,7 +275,7 @@ app.MapPost("/api/import-files", async (HttpContext ctx, PlumbobForge.Backend.Se
     {
         if (filePaths != null && filePaths.Length > 0)
         {
-            await manager.ImportFilesAsync(filePaths, onProgress);
+            await manager.ImportFilesAsync(filePaths, onProgress, duplicateAction, targetSetId);
         }
     }
     catch (Exception ex)
@@ -231,9 +303,16 @@ app.MapPost("/api/upload-files", async (HttpContext ctx, PlumbobForge.Backend.Se
     try
     {
         var form = await ctx.Request.ReadFormAsync();
+        string duplicateAction = form.ContainsKey("duplicateAction") ? form["duplicateAction"].ToString() : "rename";
+        long? targetSetId = null;
+        if (form.ContainsKey("targetSetId") && long.TryParse(form["targetSetId"].ToString(), out long sid) && sid > 0)
+        {
+            targetSetId = sid;
+        }
+
         if (form.Files.Count > 0)
         {
-            await manager.UploadFilesAsync(form.Files, onProgress);
+            await manager.UploadFilesAsync(form.Files, onProgress, duplicateAction, targetSetId);
         }
     }
     catch (Exception ex)
@@ -244,7 +323,38 @@ app.MapPost("/api/upload-files", async (HttpContext ctx, PlumbobForge.Backend.Se
     onProgress("DONE");
 }).DisableAntiforgery();
 
-app.MapPost("/api/import-downloads", async (HttpContext ctx, PlumbobForge.Backend.Services.PKGManager manager) =>
+app.MapGet("/api/notifications/stream", async (HttpContext ctx, PlumbobForge.Backend.Services.NotificationService notifier, CancellationToken cancellationToken) =>
+{
+    ctx.Response.Headers.Append("Content-Type", "text/event-stream");
+    ctx.Response.Headers.Append("Cache-Control", "no-cache");
+    ctx.Response.Headers.Append("Connection", "keep-alive");
+
+    var id = notifier.Subscribe(async (data) =>
+    {
+        await ctx.Response.WriteAsync(data, cancellationToken);
+        await ctx.Response.Body.FlushAsync(cancellationToken);
+    });
+
+    try
+    {
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+    }
+    catch (OperationCanceledException)
+    {
+    }
+    finally
+    {
+        notifier.Unsubscribe(id);
+    }
+});
+
+app.MapGet("/api/import-downloads/check-duplicates", (PlumbobForge.Backend.Services.PKGManager manager) =>
+{
+    var duplicates = manager.CheckDownloadsDuplicates();
+    return Results.Ok(new { hasDuplicates = duplicates.Count > 0, duplicates });
+});
+
+app.MapPost("/api/import-downloads", async (HttpContext ctx, string? duplicateAction, PlumbobForge.Backend.Services.PKGManager manager, PlumbobForge.Backend.Services.NotificationService notifier) =>
 {
     ctx.Response.Headers.Append("Content-Type", "text/event-stream");
 
@@ -260,7 +370,11 @@ app.MapPost("/api/import-downloads", async (HttpContext ctx, PlumbobForge.Backen
 
     try
     {
-        await manager.ImportFromDownloadsAsync(onProgress);
+        int count = await manager.ImportFromDownloadsAsync(onProgress, duplicateAction ?? "rename");
+        if (count > 0)
+        {
+            await notifier.BroadcastAsync("items_imported", new { count });
+        }
     }
     catch (Exception ex)
     {
@@ -300,6 +414,12 @@ app.MapPost("/api/settings/recheck-types", async (HttpContext ctx, PlumbobForge.
 {
     ctx.Response.Headers.Append("Content-Type", "text/event-stream");
 
+    bool skipUserTagged = true;
+    if (ctx.Request.Query.ContainsKey("skipUserTagged") && bool.TryParse(ctx.Request.Query["skipUserTagged"], out bool skipVal))
+    {
+        skipUserTagged = skipVal;
+    }
+
     Action<string> onProgress = (msg) =>
     {
         try
@@ -312,7 +432,7 @@ app.MapPost("/api/settings/recheck-types", async (HttpContext ctx, PlumbobForge.
 
     try
     {
-        await manager.RecheckPackageTypesAsync(onProgress);
+        await manager.RecheckPackageTypesAsync(onProgress, skipUserTagged);
     }
     catch (Exception ex)
     {
@@ -332,6 +452,7 @@ app.MapGet("/api/configurations", async (AppDbContext db) =>
     {
         c.Id,
         c.Name,
+        c.Description,
         c.Default,
         c.Active,
         SetIds = c.ConfigSetsEntities.Select(cs => cs.SetsEntityId).ToList()
@@ -358,9 +479,57 @@ app.MapPost("/api/configurations", async (AppDbContext db, HttpContext ctx) =>
     {
         config.Id,
         config.Name,
+        config.Description,
         config.Default,
         config.Active,
         SetIds = config.ConfigSetsEntities.Select(cs => cs.SetsEntityId).ToList()
+    });
+});
+
+app.MapPost("/api/configurations/{id}/duplicate", async (long id, AppDbContext db) =>
+{
+    var sourceConfig = await db.ConfigEntities
+        .Include(c => c.ConfigSetsEntities)
+        .FirstOrDefaultAsync(c => c.Id == id);
+
+    if (sourceConfig == null) return Results.NotFound();
+
+    string newName = $"{sourceConfig.Name} (Copy)";
+    int copyCount = 1;
+    while (await db.ConfigEntities.AnyAsync(c => c.Name == newName))
+    {
+        copyCount++;
+        newName = $"{sourceConfig.Name} (Copy {copyCount})";
+    }
+
+    var newConfig = new ConfigEntity
+    {
+        Name = newName,
+        Description = sourceConfig.Description,
+        Active = false,
+        Default = false
+    };
+    db.ConfigEntities.Add(newConfig);
+    await db.SaveChangesAsync();
+
+    foreach (var cs in sourceConfig.ConfigSetsEntities)
+    {
+        newConfig.ConfigSetsEntities.Add(new ConfigSetsEntity
+        {
+            ConfigEntityId = newConfig.Id,
+            SetsEntityId = cs.SetsEntityId
+        });
+    }
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        newConfig.Id,
+        newConfig.Name,
+        newConfig.Description,
+        newConfig.Default,
+        newConfig.Active,
+        SetIds = newConfig.ConfigSetsEntities.Select(cs => cs.SetsEntityId).ToList()
     });
 });
 
@@ -373,11 +542,12 @@ app.MapDelete("/api/configurations/{id}", async (long id, AppDbContext db) =>
     return Results.Ok();
 });
 
-app.MapPut("/api/configurations/{id}", async (long id, string name, AppDbContext db) =>
+app.MapPut("/api/configurations/{id}", async (long id, string? name, string? description, AppDbContext db) =>
 {
     var config = await db.ConfigEntities.FindAsync(id);
     if (config == null) return Results.NotFound();
-    config.Name = name;
+    if (name != null) config.Name = name;
+    if (description != null) config.Description = description;
     await db.SaveChangesAsync();
     return Results.Ok(config);
 });
@@ -402,7 +572,7 @@ app.MapPut("/api/configurations/{id}/sets", async (long id, ConfigSetsUpdateDto 
     if (config.Active)
     {
         var manager = ctx.RequestServices.GetRequiredService<PlumbobForge.Backend.Services.PKGManager>();
-        await manager.SyncToSims3Async();
+        await manager.SyncToSims3Async(null, forceRebuildStatic: true);
     }
 
     return Results.Ok();
@@ -418,7 +588,7 @@ app.MapPut("/api/configurations/{id}/active", async (long id, AppDbContext db, H
     await db.SaveChangesAsync();
 
     var manager = ctx.RequestServices.GetRequiredService<PlumbobForge.Backend.Services.PKGManager>();
-    await manager.SyncToSims3Async();
+    await manager.SyncToSims3Async(null, forceRebuildStatic: true);
 
     return Results.Ok();
 });
@@ -428,7 +598,7 @@ app.MapGet("/api/settings", (Microsoft.Extensions.Options.IOptionsSnapshot<Plumb
     return Results.Ok(options.Value);
 });
 
-app.MapPost("/api/settings", async (SaveSettingsRequest req, IWebHostEnvironment env) =>
+app.MapPost("/api/settings", async (SaveSettingsRequest req, IWebHostEnvironment env, AppDbContext db) =>
 {
     var newOptions = req.Options;
     var appSettingsFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "plumbobforge-app", "appsettings.json");
@@ -446,6 +616,15 @@ app.MapPost("/api/settings", async (SaveSettingsRequest req, IWebHostEnvironment
             newOptions.ManagedPackageFolderName = "Library";
             newOptions.SetCacheFolderName = "Builds";
 
+            var jsonObserved = new System.Text.Json.Nodes.JsonArray();
+            if (newOptions.ObservedFolders != null)
+            {
+                foreach (var folder in newOptions.ObservedFolders)
+                {
+                    if (!string.IsNullOrWhiteSpace(folder)) jsonObserved.Add(folder);
+                }
+            }
+
             var ccMagicNode = new System.Text.Json.Nodes.JsonObject
             {
                 ["DocumentBaseDir"] = newOptions.DocumentBaseDir,
@@ -458,13 +637,24 @@ app.MapPost("/api/settings", async (SaveSettingsRequest req, IWebHostEnvironment
                 ["TS3PackStoreFolderName"] = newOptions.TS3PackStoreFolderName,
                 ["GameFilesDir"] = newOptions.GameFilesDir,
                 ["CompressionLevel"] = newOptions.CompressionLevel,
-                ["HasSeenWalkthrough"] = newOptions.HasSeenWalkthrough
+                ["HasSeenWalkthrough"] = newOptions.HasSeenWalkthrough,
+                ["Language"] = newOptions.Language,
+                ["Theme"] = newOptions.Theme,
+                ["CacheMethod"] = newOptions.CacheMethod,
+                ["ObservedFolders"] = jsonObserved
             };
 
             jObject["PlumbobForge"] = ccMagicNode;
 
             var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
             await System.IO.File.WriteAllTextAsync(appSettingsFile, jObject.ToJsonString(options));
+
+            try
+            {
+                var watcherService = app.Services.GetService<PlumbobForge.Backend.Services.DownloadsWatcherService>();
+                watcherService?.ReloadWatchers();
+            }
+            catch { }
 
             // Perform directory move if requested
             if (req.MoveFolder && !string.IsNullOrEmpty(oldBaseDir) && !string.IsNullOrEmpty(newOptions.DocumentBaseDir) && oldBaseDir != newOptions.DocumentBaseDir)
@@ -480,6 +670,18 @@ app.MapPost("/api/settings", async (SaveSettingsRequest req, IWebHostEnvironment
                     }
                     catch { /* If it fails, we gracefully continue with settings saved */ }
                 }
+            }
+
+            // Update all MetaEntity.CompleteFileName paths when DocumentBaseDir changes
+            if (!string.IsNullOrEmpty(oldBaseDir) && !string.IsNullOrEmpty(newOptions.DocumentBaseDir) && !string.Equals(oldBaseDir, newOptions.DocumentBaseDir, StringComparison.OrdinalIgnoreCase))
+            {
+                var newManagedPath = Path.Combine(newOptions.DocumentBaseDir, newOptions.ManagedPackageFolderName);
+                var allItems = await db.MetaEntities.ToListAsync();
+                foreach (var item in allItems)
+                {
+                    item.CompleteFileName = Path.Combine(newManagedPath, item.FileName);
+                }
+                await db.SaveChangesAsync();
             }
         }
     }
@@ -807,9 +1009,61 @@ app.MapPut("/api/items/enabled", async (AppDbContext db, HttpContext context) =>
         }
     }
 
-    await db.SaveChangesAsync();
-
     return Results.Ok(new { message = $"Toggled {itemsToToggle.Count} items." });
+});
+
+// Retag Items
+app.MapPut("/api/items/retag", async (RetagItemsDto dto, AppDbContext db) =>
+{
+    if (dto == null || dto.ItemIds == null || dto.ItemIds.Count == 0)
+        return Results.BadRequest();
+
+    var items = await db.MetaEntities.Where(m => dto.ItemIds.Contains(m.Id)).ToListAsync();
+    foreach (var item in items)
+    {
+        item.PackageType = dto.PackageType ?? "Other";
+        item.CASCategories = dto.PackageType == "CAS" ? (dto.CasCategories ?? "") : "";
+        item.IsUserTagged = true;
+    }
+
+    await db.SaveChangesAsync();
+    return Results.Ok(new { message = $"Retagged {items.Count} items." });
+});
+
+// Update User Tags
+app.MapPut("/api/items/user-tags", async (UpdateUserTagsDto dto, AppDbContext db) =>
+{
+    if (dto == null || dto.ItemIds == null || dto.ItemIds.Count == 0)
+        return Results.BadRequest();
+
+    var items = await db.MetaEntities.Where(m => dto.ItemIds.Contains(m.Id)).ToListAsync();
+    foreach (var item in items)
+    {
+        if (dto.RemoveAll)
+        {
+            item.UserTags = "";
+        }
+        else if (dto.SetTags != null)
+        {
+            item.UserTags = string.Join(",", dto.SetTags.Select(t => t.Trim()).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.OrdinalIgnoreCase));
+        }
+        else if (dto.AddTags != null && dto.AddTags.Length > 0)
+        {
+            var currentTags = (item.UserTags ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim()).ToList();
+            foreach (var newTag in dto.AddTags)
+            {
+                string cleanTag = newTag.Trim();
+                if (!string.IsNullOrWhiteSpace(cleanTag) && !currentTags.Contains(cleanTag, StringComparer.OrdinalIgnoreCase))
+                {
+                    currentTags.Add(cleanTag);
+                }
+            }
+            item.UserTags = string.Join(",", currentTags);
+        }
+    }
+
+    await db.SaveChangesAsync();
+    return Results.Ok(new { message = $"Updated user tags for {items.Count} items." });
 });
 
 // Rename Item
@@ -922,3 +1176,11 @@ public class ConfigSetsUpdateDto { public List<long> SetIds { get; set; } = new(
 public class ValidateGameFilesRequest { public string Path { get; set; } = ""; }
 
 public record SaveSettingsRequest(PlumbobForgeOptions Options, bool MoveFolder);
+
+public record RetagItemsDto(List<long> ItemIds, string PackageType, string CasCategories);
+
+public record UpdateUserTagsDto(List<long> ItemIds, string[]? SetTags, string[]? AddTags, bool RemoveAll);
+
+public record CheckDuplicatesRequest(string[] FileNames);
+
+public record ImportFilesRequest(string[] FilePaths, string? DuplicateAction, long? TargetSetId);

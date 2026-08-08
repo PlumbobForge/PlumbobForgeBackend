@@ -177,6 +177,7 @@ public class PKGManager
                     else if (string.Equals(duplicateAction, "replace", StringComparison.OrdinalIgnoreCase))
                     {
                         try { File.Delete(destPath); } catch { }
+                        MarkExistingFileDirty(fileName);
                     }
                     else
                     {
@@ -268,6 +269,7 @@ public class PKGManager
                             else if (string.Equals(duplicateAction, "replace", StringComparison.OrdinalIgnoreCase))
                             {
                                 // Overwrite existing
+                                MarkExistingFileDirty(fileName);
                             }
                             else
                             {
@@ -346,6 +348,7 @@ public class PKGManager
                             {
                                 File.Copy(file, dest, true);
                                 movedCount++;
+                                MarkExistingFileDirty(fileName);
                                 continue;
                             }
                             else
@@ -514,6 +517,7 @@ public class PKGManager
                             else if (duplicateAction == "replace")
                             {
                                 try { File.Delete(dest); } catch { }
+                                MarkExistingFileDirty(fileName);
                             }
                             else // "rename"
                             {
@@ -871,9 +875,26 @@ public class PKGManager
         Directory.CreateDirectory(Path.Combine(_options.DocumentBaseDir, "Thumbnails"));
     }
 
+    private void MarkExistingFileDirty(string fileName)
+    {
+        try
+        {
+            var existingMeta = _db.MetaEntities.Include(m => m.SetsEntity).FirstOrDefault(m => m.FileName == fileName);
+            if (existingMeta != null)
+            {
+                if (existingMeta.SetsEntity != null)
+                {
+                    existingMeta.SetsEntity.Dirty = true;
+                }
+            }
+        }
+        catch { }
+    }
+
     private async Task CheckOrphanPackagesAsync(long? targetSetId = null)
     {
-        var existingFiles = await _db.MetaEntities.Select(m => m.FileName).ToListAsync();
+        var existingMetas = await _db.MetaEntities.Include(m => m.SetsEntity).ToListAsync();
+        var existingDict = existingMetas.ToDictionary(m => m.FileName, StringComparer.OrdinalIgnoreCase);
 
         if (!Directory.Exists(_options.ManagedPackageFolderPath))
             return;
@@ -899,7 +920,10 @@ public class PKGManager
         foreach (string filePath in files)
         {
             string fileName = Path.GetFileName(filePath);
-            if (!existingFiles.Contains(fileName))
+            var fileInfo = new FileInfo(filePath);
+            double currentSizeKb = fileInfo.Length / 1024.0;
+
+            if (!existingDict.TryGetValue(fileName, out var existingMeta))
             {
                 bool isSims3Pack = Path.GetExtension(fileName).Equals(".sims3pack", StringComparison.OrdinalIgnoreCase);
 
@@ -919,11 +943,40 @@ public class PKGManager
                     InstallDate = DateTime.Now.ToString(),
                     Manifest = string.Empty,
                     Enabled = true,
-                    FileSize = new FileInfo(filePath).Length / 1024.0
+                    FileSize = currentSizeKb
                 };
 
                 assignSet.Dirty = true;
                 _db.MetaEntities.Add(meta);
+            }
+            else
+            {
+                bool isSims3Pack = Path.GetExtension(fileName).Equals(".sims3pack", StringComparison.OrdinalIgnoreCase);
+                bool sizeChanged = Math.Abs(existingMeta.FileSize - currentSizeKb) > 0.01;
+
+                if (sizeChanged || existingMeta.CompleteFileName != filePath || (existingMeta.SetsEntity != null && existingMeta.SetsEntity.Dirty))
+                {
+                    var typeInfo = DetectPackageType(filePath, isSims3Pack);
+                    existingMeta.FileType = isSims3Pack ? "TS3PACK" : "DBPF";
+                    existingMeta.PackageType = typeInfo.PackageType;
+                    existingMeta.CASCategories = typeInfo.CASCategories;
+                    existingMeta.CASAge = typeInfo.CASAge;
+                    existingMeta.CASGender = typeInfo.CASGender;
+                    existingMeta.CASOutfitCategory = typeInfo.CASOutfitCategory;
+                    existingMeta.CompleteFileName = filePath;
+                    existingMeta.FileSize = currentSizeKb;
+                    existingMeta.InstallDate = DateTime.Now.ToString();
+
+                    if (existingMeta.SetsEntity != null)
+                    {
+                        existingMeta.SetsEntity.Dirty = true;
+                    }
+                    else
+                    {
+                        existingMeta.SetsEntity = assignSet;
+                        assignSet.Dirty = true;
+                    }
+                }
             }
         }
 

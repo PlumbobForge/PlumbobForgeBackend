@@ -725,27 +725,15 @@ app.MapPost("/api/settings/autodetect", () =>
 
 app.MapGet("/api/settings/autodetect-gamefiles", () =>
 {
-    string[] defaultPaths = {
-        @"C:\Program Files\EA Games\The Sims 3",
-        @"C:\Program Files (x86)\Steam\steamapps\common\The Sims 3",
-        @"C:\Games\The Sims 3"
-    };
-
-    foreach (var path in defaultPaths)
-    {
-        if (System.IO.Directory.Exists(path) && System.IO.Directory.Exists(System.IO.Path.Combine(path, "GameData", "Shared", "NonPackaged", "Worlds")))
-        {
-            return Results.Ok(new { path = path });
-        }
-    }
-    return Results.Ok(new { path = "" });
+    string detectedPath = PlumbobForge.Backend.Services.GamePathValidator.AutodetectGameFilesPath();
+    return Results.Ok(new { path = detectedPath });
 });
 
 app.MapPost("/api/settings/validate-gamefiles", (ValidateGameFilesRequest req) =>
 {
-    if (string.IsNullOrWhiteSpace(req.Path)) return Results.Ok(new { valid = false });
-    bool exists = System.IO.Directory.Exists(req.Path) && System.IO.Directory.Exists(System.IO.Path.Combine(req.Path, "GameData", "Shared", "NonPackaged", "Worlds"));
-    return Results.Ok(new { valid = exists });
+    if (string.IsNullOrWhiteSpace(req.Path)) return Results.Ok(new { valid = false, normalizedPath = "" });
+    var (valid, normalizedPath) = PlumbobForge.Backend.Services.GamePathValidator.ValidateAndNormalize(req.Path);
+    return Results.Ok(new { valid, normalizedPath });
 });
 
 app.MapPost("/api/migrate", async (Microsoft.Extensions.Options.IOptionsSnapshot<PlumbobForgeOptions> options, PlumbobForge.Backend.Database.AppDbContext db, PlumbobForge.Backend.Services.PKGManager manager) =>

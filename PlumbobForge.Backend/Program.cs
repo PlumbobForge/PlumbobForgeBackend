@@ -568,9 +568,16 @@ app.MapPut("/api/configurations/{id}/sets", async (long id, ConfigSetsUpdateDto 
 
     await db.SaveChangesAsync();
 
-    // If it's active, regenerate resource.cfg instantly!
+    // If it's active, mark sets dirty and regenerate resource.cfg!
     if (config.Active)
     {
+        var allSets = await db.SetsEntities.ToListAsync();
+        foreach (var s in allSets)
+        {
+            s.Dirty = true;
+        }
+        await db.SaveChangesAsync();
+
         var manager = ctx.RequestServices.GetRequiredService<PlumbobForge.Backend.Services.PKGManager>();
         await manager.SyncToSims3Async(null, forceRebuildStatic: true);
     }
@@ -585,6 +592,13 @@ app.MapPut("/api/configurations/{id}/active", async (long id, AppDbContext db, H
     {
         c.Active = c.Id == id;
     }
+
+    var allSets = await db.SetsEntities.ToListAsync();
+    foreach (var s in allSets)
+    {
+        s.Dirty = true;
+    }
+
     await db.SaveChangesAsync();
 
     var manager = ctx.RequestServices.GetRequiredService<PlumbobForge.Backend.Services.PKGManager>();

@@ -1,10 +1,12 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using PlumbobForge.Backend.Configuration;
 
 namespace PlumbobForge.Backend.Services;
 
@@ -46,8 +48,10 @@ public class DownloadsWatcherService : BackgroundService
 
             using var scope = _serviceProvider.CreateScope();
             var pkgManager = scope.ServiceProvider.GetRequiredService<PKGManager>();
+            var options = scope.ServiceProvider.GetRequiredService<IOptionsSnapshot<PlumbobForgeOptions>>().Value;
             var folders = pkgManager.GetObservedFolders();
 
+            // 1. Watch observed "Downloads" folders
             foreach (var dir in folders)
             {
                 if (!Directory.Exists(dir))
@@ -68,6 +72,33 @@ public class DownloadsWatcherService : BackgroundService
                     watcher.Changed += OnFileCreatedOrChanged;
                     watcher.Renamed += OnFileRenamed;
                     _watchers.Add(watcher);
+                }
+            }
+
+            // 2. Watch main Library folder (including subdirectories for set folders and restored Recycle Bin files)
+            string libraryDir = options.ManagedPackageFolderPath;
+            if (!string.IsNullOrWhiteSpace(libraryDir))
+            {
+                if (!Directory.Exists(libraryDir))
+                {
+                    try { Directory.CreateDirectory(libraryDir); } catch { }
+                }
+
+                if (Directory.Exists(libraryDir))
+                {
+                    _logger.LogInformation("Starting main Library folder watcher on: {Path}", libraryDir);
+                    var libWatcher = new FileSystemWatcher(libraryDir)
+                    {
+                        IncludeSubdirectories = true,
+                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
+                        Filter = "*.*",
+                        EnableRaisingEvents = true
+                    };
+                    libWatcher.Created += OnLibraryFileChanged;
+                    libWatcher.Changed += OnLibraryFileChanged;
+                    libWatcher.Deleted += OnLibraryFileChanged;
+                    libWatcher.Renamed += OnLibraryFileRenamed;
+                    _watchers.Add(libWatcher);
                 }
             }
         }
@@ -107,15 +138,36 @@ public class DownloadsWatcherService : BackgroundService
         }
     }
 
+    private void OnLibraryFileChanged(object sender, FileSystemEventArgs e)
+    {
+        if (IsPackageExtension(e.FullPath))
+        {
+            _ = Task.Run(() => DebouncedLibraryScanAsync(e.FullPath, e.ChangeType.ToString()));
+        }
+    }
+
+    private void OnLibraryFileRenamed(object sender, RenamedEventArgs e)
+    {
+        if (IsPackageExtension(e.FullPath) || IsPackageExtension(e.OldFullPath))
+        {
+            _ = Task.Run(() => DebouncedLibraryScanAsync(e.FullPath, "Renamed"));
+        }
+    }
+
     private static bool IsImportableExtension(string path)
     {
         string ext = Path.GetExtension(path).ToLowerInvariant();
         return ext == ".package" || ext == ".sims3pack" || ext == ".zip" || ext == ".rar" || ext == ".7z";
     }
 
+    private static bool IsPackageExtension(string path)
+    {
+        string ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext == ".package" || ext == ".sims3pack";
+    }
+
     private async Task DebouncedImportAsync(string filePath)
     {
-        // Wait up to 5 seconds for file writing/transfer to complete and lock to release
         for (int i = 0; i < 10; i++)
         {
             await Task.Delay(500);
@@ -124,6 +176,19 @@ public class DownloadsWatcherService : BackgroundService
         }
 
         await TriggerAutoImportAsync($"New file detected: {Path.GetFileName(filePath)}");
+    }
+
+    private async Task DebouncedLibraryScanAsync(string filePath, string changeType)
+    {
+        // Wait up to 5 seconds for file restoration/copying to complete and locks to release
+        for (int i = 0; i < 10; i++)
+        {
+            await Task.Delay(500);
+            if (!File.Exists(filePath)) break; // If file was deleted/removed, proceed to scan
+            if (IsFileReady(filePath)) break;
+        }
+
+        await TriggerLibraryScanAsync($"Library file {changeType}: {Path.GetFileName(filePath)}");
     }
 
     private async Task TriggerAutoImportAsync(string reason)
@@ -155,6 +220,30 @@ public class DownloadsWatcherService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during automatic import from Downloads.");
+        }
+        finally
+        {
+            _importLock.Release();
+        }
+    }
+
+    private async Task TriggerLibraryScanAsync(string reason)
+    {
+        await _importLock.WaitAsync();
+
+        try
+        {
+            _logger.LogInformation("Triggering automatic Library rescan ({Reason})...", reason);
+            using var scope = _serviceProvider.CreateScope();
+            var pkgManager = scope.ServiceProvider.GetRequiredService<PKGManager>();
+            var notifier = scope.ServiceProvider.GetRequiredService<NotificationService>();
+
+            await pkgManager.ScanLibraryDiskAsync(msg => _logger.LogInformation("[LibraryWatcher] {Msg}", msg));
+            await notifier.BroadcastAsync("library_changed", new { reason });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during automatic Library rescan.");
         }
         finally
         {

@@ -45,6 +45,8 @@ public class CacheBuilderService
             Directory.CreateDirectory(sims3CacheDir);
             Directory.CreateDirectory(sims3ConfigDir);
 
+            EnsureMainResourceCfg(sims3ModsDir);
+
             bool isStatic = string.Equals(_options.CacheMethod, "Static", StringComparison.OrdinalIgnoreCase);
             if (isStatic)
             {
@@ -54,6 +56,9 @@ public class CacheBuilderService
                     sw.WriteLine("Priority 500");
                     sw.WriteLine(@"PackedFile ../StaticCache/*.package");
                     sw.WriteLine(@"PackedFile ../StaticCache/*/*.package");
+                    sw.WriteLine(@"PackedFile ../StaticCache/*/*/*.package");
+                    sw.WriteLine(@"PackedFile ../StaticCache/*/*/*/*.package");
+                    sw.WriteLine(@"PackedFile ../StaticCache/*/*/*/*/*.package");
                 }
 
                 bool staticCacheExists = Directory.Exists(staticCacheDir) && Directory.GetFiles(staticCacheDir, "*.package").Length > 0;
@@ -61,20 +66,21 @@ public class CacheBuilderService
                 {
                     await RebuildStaticCacheAsync(onProgress);
                 }
-                return;
             }
-
-            // Clean up old orphaned cache sets
-            var allSetFolderNames = _db.SetsEntities.Select(s => s.FolderName).ToList();
-            allSetFolderNames.Add("Config");
-            allSetFolderNames.Add("StaticCache");
-
-            foreach (var dir in Directory.GetDirectories(sims3CacheDir))
+            else
             {
-                string dirName = Path.GetFileName(dir);
-                if (!allSetFolderNames.Contains(dirName))
+                // Clean up old orphaned cache sets
+                var allSetFolderNames = _db.SetsEntities.Select(s => s.FolderName).ToList();
+                allSetFolderNames.Add("Config");
+                allSetFolderNames.Add("StaticCache");
+
+                foreach (var dir in Directory.GetDirectories(sims3CacheDir))
                 {
-                    Directory.Delete(dir, true);
+                    string dirName = Path.GetFileName(dir);
+                    if (!allSetFolderNames.Contains(dirName))
+                    {
+                        Directory.Delete(dir, true);
+                    }
                 }
             }
 
@@ -85,33 +91,39 @@ public class CacheBuilderService
 
             var targetFilesToSync = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            string configResourceCfg = Path.Combine(sims3ConfigDir, "Resource.cfg");
-            using (StreamWriter sw = new StreamWriter(configResourceCfg, false))
+            if (!isStatic)
             {
-                sw.WriteLine("Priority 500");
-                if (activeConfig != null)
+                string configResourceCfg = Path.Combine(sims3ConfigDir, "Resource.cfg");
+                using (StreamWriter sw = new StreamWriter(configResourceCfg, false))
                 {
-                    foreach (var cs in activeConfig.ConfigSetsEntities)
+                    sw.WriteLine("Priority 500");
+                    if (activeConfig != null)
                     {
-                        if (cs.SetsEntity != null)
+                        foreach (var cs in activeConfig.ConfigSetsEntities)
                         {
-                            string folderName = GetSetFolderName(cs.SetsEntity);
-                            sw.WriteLine($"PackedFile ../{folderName}/*.package");
-                            sw.WriteLine($"PackedFile ../{folderName}/*/*.package");
-
-                            string sourceSetCacheDir = GetSetPath(cs.SetsEntity);
-                            if (Directory.Exists(sourceSetCacheDir))
+                            if (cs.SetsEntity != null)
                             {
-                                string nonPackageFile = Path.Combine(sourceSetCacheDir, "NonPackageItems.txt");
-                                if (File.Exists(nonPackageFile))
+                                string folderName = GetSetFolderName(cs.SetsEntity);
+                                sw.WriteLine($"PackedFile ../{folderName}/*.package");
+                                sw.WriteLine($"PackedFile ../{folderName}/*/*.package");
+                                sw.WriteLine($"PackedFile ../{folderName}/*/*/*.package");
+                                sw.WriteLine($"PackedFile ../{folderName}/*/*/*/*.package");
+                                sw.WriteLine($"PackedFile ../{folderName}/*/*/*/*/*.package");
+
+                                string sourceSetCacheDir = GetSetPath(cs.SetsEntity);
+                                if (Directory.Exists(sourceSetCacheDir))
                                 {
-                                    foreach (var line in File.ReadAllLines(nonPackageFile))
+                                    string nonPackageFile = Path.Combine(sourceSetCacheDir, "NonPackageItems.txt");
+                                    if (File.Exists(nonPackageFile))
                                     {
-                                        if (string.IsNullOrWhiteSpace(line)) continue;
-                                        string fileName = Path.GetFileName(line);
-                                        string folder = Path.GetFileName(Path.GetDirectoryName(line)!);
-                                        string destPath = GetTS3FolderPath(folder, fileName);
-                                        targetFilesToSync[destPath] = line;
+                                        foreach (var line in File.ReadAllLines(nonPackageFile))
+                                        {
+                                            if (string.IsNullOrWhiteSpace(line)) continue;
+                                            string fileName = Path.GetFileName(line);
+                                            string folder = Path.GetFileName(Path.GetDirectoryName(line)!);
+                                            string destPath = GetTS3FolderPath(folder, fileName);
+                                            targetFilesToSync[destPath] = line;
+                                        }
                                     }
                                 }
                             }
@@ -733,6 +745,53 @@ public class CacheBuilderService
             MemoryStream memoryStream = new MemoryStream();
             xmlDocument.Save(memoryStream);
             resource.ChangeStream(memoryStream);
+        }
+    }
+
+    private void EnsureMainResourceCfg(string sims3ModsDir)
+    {
+        string mainResourceCfg = Path.Combine(sims3ModsDir, "Resource.cfg");
+        bool needsCreation = !File.Exists(mainResourceCfg);
+        if (!needsCreation)
+        {
+            try
+            {
+                string content = File.ReadAllText(mainResourceCfg);
+                if (!content.Contains("Cache", StringComparison.OrdinalIgnoreCase))
+                {
+                    needsCreation = true;
+                }
+            }
+            catch
+            {
+                needsCreation = true;
+            }
+        }
+
+        if (needsCreation)
+        {
+            try
+            {
+                using var sw = new StreamWriter(mainResourceCfg, false);
+                sw.WriteLine("Priority 500");
+                sw.WriteLine("PackedFile Cache/Config/Resource.cfg");
+                sw.WriteLine("PackedFile Cache/*.package");
+                sw.WriteLine("PackedFile Cache/*/*.package");
+                sw.WriteLine("PackedFile Cache/*/*/*.package");
+                sw.WriteLine("PackedFile Cache/*/*/*/*.package");
+                sw.WriteLine("PackedFile Cache/*/*/*/*/*.package");
+                sw.WriteLine("PackedFile Packages/*.package");
+                sw.WriteLine("PackedFile Packages/*/*.package");
+                sw.WriteLine("PackedFile Packages/*/*/*.package");
+                sw.WriteLine("PackedFile Packages/*/*/*/*.package");
+                sw.WriteLine("PackedFile Packages/*/*/*/*/*.package");
+                sw.WriteLine("PackedFile Overrides/*.package");
+                sw.WriteLine("PackedFile Overrides/*/*.package");
+                sw.WriteLine("PackedFile Overrides/*/*/*.package");
+                sw.WriteLine("PackedFile Overrides/*/*/*/*.package");
+                sw.WriteLine("PackedFile Overrides/*/*/*/*/*.package");
+            }
+            catch { }
         }
     }
 }

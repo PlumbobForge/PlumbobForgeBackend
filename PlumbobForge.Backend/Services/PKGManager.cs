@@ -506,17 +506,41 @@ public class PKGManager
     private async Task CheckSetParentingAsync()
     {
         var allSets = await _db.SetsEntities.ToListAsync();
+        bool modified = false;
+
         foreach (var set in allSets)
         {
             if (set.ParentSetsEntityId.HasValue)
             {
-                if (!allSets.Any(s => s.Id == set.ParentSetsEntityId.Value))
+                var visited = new HashSet<long> { set.Id };
+                var current = allSets.FirstOrDefault(s => s.Id == set.ParentSetsEntityId.Value);
+                bool isCycleOrMissing = false;
+
+                while (current != null)
+                {
+                    if (visited.Contains(current.Id))
+                    {
+                        isCycleOrMissing = true;
+                        break;
+                    }
+                    visited.Add(current.Id);
+                    current = current.ParentSetsEntityId.HasValue
+                        ? allSets.FirstOrDefault(s => s.Id == current.ParentSetsEntityId.Value)
+                        : null;
+                }
+
+                if (isCycleOrMissing || !allSets.Any(s => s.Id == set.ParentSetsEntityId.Value))
                 {
                     set.ParentSetsEntityId = null;
+                    modified = true;
                 }
             }
         }
-        await _db.SaveChangesAsync();
+
+        if (modified)
+        {
+            await _db.SaveChangesAsync();
+        }
     }
 
     private async Task CheckConfigurationsAsync()

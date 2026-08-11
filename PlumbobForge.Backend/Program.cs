@@ -831,7 +831,32 @@ app.MapPut("/api/sets/{id}/move", async (long id, AppDbContext db, HttpContext c
     var set = await db.SetsEntities.FindAsync(id);
     if (set == null) return Results.NotFound();
 
-    set.ParentSetsEntityId = payload["parentSetsEntityId"];
+    var newParentId = payload["parentSetsEntityId"];
+    if (newParentId.HasValue)
+    {
+        if (newParentId.Value == id)
+        {
+            return Results.BadRequest(new { message = "A set cannot be a parent of itself." });
+        }
+
+        var allSets = await db.SetsEntities.ToListAsync();
+        var visited = new HashSet<long> { id };
+        var current = allSets.FirstOrDefault(s => s.Id == newParentId.Value);
+
+        while (current != null)
+        {
+            if (visited.Contains(current.Id))
+            {
+                return Results.BadRequest(new { message = "Cannot move a set inside one of its own subsets." });
+            }
+            visited.Add(current.Id);
+            current = current.ParentSetsEntityId.HasValue
+                ? allSets.FirstOrDefault(s => s.Id == current.ParentSetsEntityId.Value)
+                : null;
+        }
+    }
+
+    set.ParentSetsEntityId = newParentId;
     await db.SaveChangesAsync();
     return Results.Ok(set);
 });
@@ -901,9 +926,12 @@ app.MapDelete("/api/sets/{id}", async (long id, bool deleteItems, AppDbContext d
     // Recursively collect all subsets
     var allSets = await db.SetsEntities.Include(s => s.Children).ToListAsync();
     var setsToDelete = new List<SetsEntity>();
+    var visitedSetIds = new HashSet<long>();
 
     void CollectSets(SetsEntity current)
     {
+        if (visitedSetIds.Contains(current.Id)) return;
+        visitedSetIds.Add(current.Id);
         setsToDelete.Add(current);
         foreach (var child in allSets.Where(s => s.ParentSetsEntityId == current.Id))
         {

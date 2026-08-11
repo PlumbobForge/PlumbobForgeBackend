@@ -9,8 +9,15 @@ public class AppDbContext : DbContext
     public DbSet<ConfigEntity> ConfigEntities { get; set; }
     public DbSet<ConfigSetsEntity> ConfigSetsEntities { get; set; }
     public DbSet<SettingEntity> SettingEntities { get; set; }
+    public DbSet<TombstoneEntity> Tombstones { get; set; }
     
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        base.OnConfiguring(optionsBuilder);
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -25,6 +32,18 @@ public class AppDbContext : DbContext
             .WithMany(s => s.MetaEntities)
             .HasForeignKey(m => m.SetsEntityId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<MetaEntity>()
+            .HasIndex(m => m.SetsEntityId);
+
+        modelBuilder.Entity<MetaEntity>()
+            .HasIndex(m => m.Enabled);
+
+        modelBuilder.Entity<MetaEntity>()
+            .HasIndex(m => m.PackageType);
+
+        modelBuilder.Entity<MetaEntity>()
+            .HasIndex(m => m.FileName);
 
         modelBuilder.Entity<ConfigSetsEntity>()
             .HasOne(c => c.ConfigEntity)

@@ -609,23 +609,6 @@ public class PKGManager
             configs[0].Active = true;
             await _db.SaveChangesAsync();
         }
-
-        var activeConfig = await _db.ConfigEntities.Include(c => c.ConfigSetsEntities).FirstOrDefaultAsync(c => c.Active);
-        if (activeConfig != null)
-        {
-            var existingSetIds = activeConfig.ConfigSetsEntities.Select(cs => cs.SetsEntityId).ToHashSet();
-            var allSets = await _db.SetsEntities.ToListAsync();
-            bool added = false;
-            foreach (var set in allSets)
-            {
-                if (!existingSetIds.Contains(set.Id))
-                {
-                    _db.ConfigSetsEntities.Add(new ConfigSetsEntity { ConfigEntityId = activeConfig.Id, SetsEntityId = set.Id });
-                    added = true;
-                }
-            }
-            if (added) await _db.SaveChangesAsync();
-        }
     }
 
     public async Task RebuildCacheAsync(bool forceRebuild = false, Action<string>? onProgress = null, List<(string FileName, string Reason)>? skippedFiles = null)

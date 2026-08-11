@@ -1010,7 +1010,7 @@ app.MapPut("/api/items/enabled", async (AppDbContext db, HttpContext context) =>
             if (defaultSet != null) defaultSet.Dirty = true;
         }
     }
-
+    await db.SaveChangesAsync();
     return Results.Ok(new { message = $"Toggled {itemsToToggle.Count} items." });
 });
 

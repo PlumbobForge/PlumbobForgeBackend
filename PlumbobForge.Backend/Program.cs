@@ -29,6 +29,10 @@ builder.Services.Configure<PlumbobForgeOptions>(
 // Add services to the container.
 builder.Services.AddSingleton<PlumbobForge.Backend.Services.NotificationService>();
 builder.Services.AddScoped<PlumbobForge.Backend.Services.LocalizationService>();
+builder.Services.AddScoped<PlumbobForge.Backend.Services.PackageTypeService>();
+builder.Services.AddScoped<PlumbobForge.Backend.Services.ArchiveService>();
+builder.Services.AddScoped<PlumbobForge.Backend.Services.ThumbnailService>();
+builder.Services.AddScoped<PlumbobForge.Backend.Services.CacheBuilderService>();
 builder.Services.AddScoped<PlumbobForge.Backend.Services.PKGManager>();
 builder.Services.AddHostedService<PlumbobForge.Backend.Services.DownloadsWatcherService>();
 
@@ -235,7 +239,7 @@ app.MapPost("/api/import-files", async (HttpContext ctx, PlumbobForge.Backend.Se
 {
     using var reader = new System.IO.StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
-    
+
     string[]? filePaths = null;
     string duplicateAction = "rename";
     long? targetSetId = null;

@@ -109,7 +109,14 @@ public class ResourceEntry : IDisposable
 		Writer.Write(value2);
 		Writer.Write(value);
 		Writer.Write((uint)_ChunkOffset);
-		Writer.Write((uint)(_ChunkLength | int.MinValue));
+		if (IsCompressed)
+		{
+			Writer.Write((uint)(_ChunkLength | 0x80000000u));
+		}
+		else
+		{
+			Writer.Write((uint)_ChunkLength);
+		}
 		Writer.Write((uint)Length);
 		if (IsCompressed)
 		{

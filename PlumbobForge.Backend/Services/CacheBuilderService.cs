@@ -772,7 +772,24 @@ public class CacheBuilderService
     private void EnsureMainResourceCfg(string sims3ModsDir)
     {
         string mainResourceCfg = Path.Combine(sims3ModsDir, "Resource.cfg");
-        if (!File.Exists(mainResourceCfg))
+        bool needsCreation = !File.Exists(mainResourceCfg);
+        if (!needsCreation)
+        {
+            try
+            {
+                string content = File.ReadAllText(mainResourceCfg);
+                if (!content.Contains("Cache", StringComparison.OrdinalIgnoreCase))
+                {
+                    needsCreation = true;
+                }
+            }
+            catch
+            {
+                needsCreation = true;
+            }
+        }
+
+        if (needsCreation)
         {
             try
             {
@@ -794,43 +811,6 @@ public class CacheBuilderService
                 sw.WriteLine("PackedFile Overrides/*/*/*.package");
                 sw.WriteLine("PackedFile Overrides/*/*/*/*.package");
                 sw.WriteLine("PackedFile Overrides/*/*/*/*/*.package");
-            }
-            catch { }
-        }
-        else
-        {
-            try
-            {
-                string content = File.ReadAllText(mainResourceCfg);
-                bool updated = false;
-
-                if (content.Contains("PackedFile Cache/Config/Resource.cfg", StringComparison.OrdinalIgnoreCase))
-                {
-                    content = content.Replace("PackedFile Cache/Config/Resource.cfg", "Scan Cache/Config/", StringComparison.OrdinalIgnoreCase);
-                    updated = true;
-                }
-
-                if (!content.Contains("Scan Cache", StringComparison.OrdinalIgnoreCase))
-                {
-                    var lines = content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None).ToList();
-                    int insertIndex = 0;
-                    for (int i = 0; i < lines.Count; i++)
-                    {
-                        if (lines[i].TrimStart().StartsWith("Priority", StringComparison.OrdinalIgnoreCase))
-                        {
-                            insertIndex = i + 1;
-                            break;
-                        }
-                    }
-                    lines.Insert(insertIndex, "Scan Cache/Config/");
-                    content = string.Join(Environment.NewLine, lines);
-                    updated = true;
-                }
-
-                if (updated)
-                {
-                    File.WriteAllText(mainResourceCfg, content);
-                }
             }
             catch { }
         }

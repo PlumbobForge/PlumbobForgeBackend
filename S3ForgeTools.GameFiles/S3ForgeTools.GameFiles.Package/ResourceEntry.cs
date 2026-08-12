@@ -108,15 +108,8 @@ public class ResourceEntry : IDisposable
 		uint value2 = (uint)((Key.Instance & 0xFFFFFFFF00000000uL) >> 32);
 		Writer.Write(value2);
 		Writer.Write(value);
-		Writer.Write((uint)_ChunkOffset);
-		if (IsCompressed)
-		{
-			Writer.Write((uint)(_ChunkLength | 0x80000000u));
-		}
-		else
-		{
-			Writer.Write((uint)_ChunkLength);
-		}
+        Writer.Write((uint)_ChunkOffset);
+		Writer.Write((uint)(_ChunkLength | int.MinValue));
 		Writer.Write((uint)Length);
 		if (IsCompressed)
 		{

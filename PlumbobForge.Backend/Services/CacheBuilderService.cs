@@ -29,12 +29,6 @@ public class CacheBuilderService
         _localizer = localizer;
     }
 
-    /// <summary>
-    /// Detects the localized Sims 3 user data folder under Documents/Electronic Arts/.
-    /// Supports localized names such as "Les Sims 3" (French), "Die Sims 3" (German),
-    /// "Los Sims 3" (Spanish), "De Sims 3" (Dutch), etc.
-    /// Falls back to "The Sims 3" if no existing folder is found.
-    /// </summary>
     public string GetSims3FolderPath()
     {
         if (_cachedSims3FolderPath != null) return _cachedSims3FolderPath;
@@ -42,15 +36,12 @@ public class CacheBuilderService
         string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
         if (Directory.Exists(eaDir))
         {
-            // Look for any existing folder that contains "Sims 3" (case-insensitive)
             var candidates = Directory.GetDirectories(eaDir)
                 .Where(d => Path.GetFileName(d).Contains("Sims 3", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            // Prefer exact match on common localized names, then fall back to first candidate
             if (candidates.Count > 0)
             {
-                // If there's an exact "The Sims 3" match, prefer it for backwards compatibility
                 var exactMatch = candidates.FirstOrDefault(d => Path.GetFileName(d).Equals("The Sims 3", StringComparison.OrdinalIgnoreCase));
                 _cachedSims3FolderPath = exactMatch ?? candidates[0];
                 return _cachedSims3FolderPath;
@@ -787,7 +778,7 @@ public class CacheBuilderService
             {
                 using var sw = new StreamWriter(mainResourceCfg, false);
                 sw.WriteLine("Priority 500");
-                sw.WriteLine("Scan Cache/Config/");
+                sw.WriteLine("PackedFile Cache/Config/Resource.cfg");
                 sw.WriteLine("PackedFile Cache/*.package");
                 sw.WriteLine("PackedFile Cache/*/*.package");
                 sw.WriteLine("PackedFile Cache/*/*/*.package");

@@ -20,11 +20,46 @@ public class CacheBuilderService
     private readonly PlumbobForgeOptions _options;
     private readonly LocalizationService _localizer;
 
+    private string? _cachedSims3FolderPath;
+
     public CacheBuilderService(AppDbContext db, IOptionsSnapshot<PlumbobForgeOptions> options, LocalizationService localizer)
     {
         _db = db;
         _options = options.Value;
         _localizer = localizer;
+    }
+
+    /// <summary>
+    /// Detects the localized Sims 3 user data folder under Documents/Electronic Arts/.
+    /// Supports localized names such as "Les Sims 3" (French), "Die Sims 3" (German),
+    /// "Los Sims 3" (Spanish), "De Sims 3" (Dutch), etc.
+    /// Falls back to "The Sims 3" if no existing folder is found.
+    /// </summary>
+    public string GetSims3FolderPath()
+    {
+        if (_cachedSims3FolderPath != null) return _cachedSims3FolderPath;
+
+        string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
+        if (Directory.Exists(eaDir))
+        {
+            // Look for any existing folder that contains "Sims 3" (case-insensitive)
+            var candidates = Directory.GetDirectories(eaDir)
+                .Where(d => Path.GetFileName(d).Contains("Sims 3", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            // Prefer exact match on common localized names, then fall back to first candidate
+            if (candidates.Count > 0)
+            {
+                // If there's an exact "The Sims 3" match, prefer it for backwards compatibility
+                var exactMatch = candidates.FirstOrDefault(d => Path.GetFileName(d).Equals("The Sims 3", StringComparison.OrdinalIgnoreCase));
+                _cachedSims3FolderPath = exactMatch ?? candidates[0];
+                return _cachedSims3FolderPath;
+            }
+        }
+
+        // Default fallback if no existing folder is found
+        _cachedSims3FolderPath = Path.Combine(eaDir, "The Sims 3");
+        return _cachedSims3FolderPath;
     }
 
     public async Task SyncToSims3Async(Action<string>? onProgress = null, bool forceRebuildStatic = false)
@@ -36,7 +71,7 @@ public class CacheBuilderService
             string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
             if (eaDir == null) return;
 
-            string sims3ModsDir = Path.Combine(eaDir, "The Sims 3", "Mods");
+            string sims3ModsDir = Path.Combine(GetSims3FolderPath(), "Mods");
             string sims3CacheDir = Path.Combine(sims3ModsDir, "Cache");
             string sims3ConfigDir = Path.Combine(sims3CacheDir, "Config");
             string staticCacheDir = Path.Combine(sims3CacheDir, "StaticCache");
@@ -136,7 +171,7 @@ public class CacheBuilderService
             var managedSubFolders = new[] { "Sims", "Lots", "Worlds" };
             foreach (var folder in managedSubFolders)
             {
-                string targetDir = Path.Combine(eaDir, "The Sims 3", folder);
+                string targetDir = Path.Combine(GetSims3FolderPath(), folder);
                 if (Directory.Exists(targetDir))
                 {
                     foreach (var file in Directory.GetFiles(targetDir))
@@ -185,7 +220,7 @@ public class CacheBuilderService
             string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
             if (!string.IsNullOrEmpty(eaDir))
             {
-                string staticDir = Path.Combine(eaDir, "The Sims 3", "Mods", "Cache", "StaticCache");
+                string staticDir = Path.Combine(GetSims3FolderPath(), "Mods", "Cache", "StaticCache");
                 if (Directory.Exists(staticDir)) Directory.Delete(staticDir, true);
             }
         }
@@ -211,7 +246,7 @@ public class CacheBuilderService
         string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
         if (string.IsNullOrEmpty(eaDir)) return;
 
-        string staticCachePath = Path.Combine(eaDir, "The Sims 3", "Mods", "Cache", "StaticCache");
+        string staticCachePath = Path.Combine(GetSims3FolderPath(), "Mods", "Cache", "StaticCache");
         Directory.CreateDirectory(staticCachePath);
 
         foreach (var file in Directory.GetFiles(staticCachePath, "*.package"))
@@ -220,7 +255,7 @@ public class CacheBuilderService
         }
 
         var allSetFolders = await _db.SetsEntities.Select(s => s.FolderName).ToListAsync();
-        string sims3CacheDir = Path.Combine(eaDir, "The Sims 3", "Mods", "Cache");
+        string sims3CacheDir = Path.Combine(GetSims3FolderPath(), "Mods", "Cache");
         foreach (var folder in allSetFolders)
         {
             if (string.IsNullOrWhiteSpace(folder) || folder == "Config" || folder == "StaticCache") continue;
@@ -334,7 +369,7 @@ public class CacheBuilderService
         string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
         if (eaDir != null)
         {
-            return Path.Combine(eaDir, "The Sims 3", "Mods", "Cache", folderName);
+            return Path.Combine(GetSims3FolderPath(), "Mods", "Cache", folderName);
         }
 
         return Path.Combine(_options.SetCacheFolderPath, "Sets", folderName);
@@ -345,7 +380,7 @@ public class CacheBuilderService
         string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
         if (!string.IsNullOrEmpty(eaDir))
         {
-            return Path.Combine(eaDir, "The Sims 3", "Mods", "Cache", folderName);
+            return Path.Combine(GetSims3FolderPath(), "Mods", "Cache", folderName);
         }
         return Path.Combine(_options.SetCacheFolderPath, "Sets", folderName);
     }
@@ -356,6 +391,11 @@ public class CacheBuilderService
 
         string setPath = GetSetPath(activeSet);
         Directory.CreateDirectory(setPath);
+
+        foreach (var file in Directory.GetFiles(setPath, "ModBUILD*.new"))
+        {
+            try { File.Delete(file); } catch { }
+        }
 
         int packageCount = 0;
         DBPFPackageBuilder? outputPkg = null;
@@ -541,17 +581,12 @@ public class CacheBuilderService
 
         if (_options.CompressionLevel > 0)
         {
-            var failedResources = new System.Collections.Concurrent.ConcurrentBag<ResourceEntry>();
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) };
             Parallel.ForEach(validResources, parallelOptions, resource =>
             {
                 try { resource.Compress(_options.CompressionLevel); }
-                catch (Exception) { failedResources.Add(resource); }
+                catch (Exception) { /* If compression fails, keep original uncompressed resource */ }
             });
-            if (!failedResources.IsEmpty)
-            {
-                validResources.RemoveAll(r => failedResources.Contains(r));
-            }
         }
 
         foreach (var resource in validResources)
@@ -581,7 +616,7 @@ public class CacheBuilderService
         string eaDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Electronic Arts");
         if (eaDir != null)
         {
-            return Path.Combine(eaDir, "The Sims 3", folderName, fileName);
+            return Path.Combine(GetSims3FolderPath(), folderName, fileName);
         }
         return Path.Combine(_options.DocumentBaseDir, folderName, fileName);
     }
@@ -667,17 +702,12 @@ public class CacheBuilderService
 
         if (_options.CompressionLevel > 0)
         {
-            var failedResources = new System.Collections.Concurrent.ConcurrentBag<ResourceEntry>();
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) };
             Parallel.ForEach(validResources, parallelOptions, resource =>
             {
                 try { resource.Compress(_options.CompressionLevel); }
-                catch (Exception) { failedResources.Add(resource); }
+                catch (Exception) { /* If compression fails, keep original uncompressed resource */ }
             });
-            if (!failedResources.IsEmpty)
-            {
-                validResources.RemoveAll(r => failedResources.Contains(r));
-            }
         }
 
         foreach (var resource in validResources)
@@ -705,7 +735,7 @@ public class CacheBuilderService
     private void FixPTRN(ResourceEntry resource)
     {
         XmlDocument xmlDocument = new XmlDocument();
-        try { xmlDocument.Load(resource.GetStream()); } catch (XmlException) { return; }
+        try { xmlDocument.Load(resource.GetStream()); } catch (Exception) { return; }
         bool flag = false;
         XmlNodeList elementsByTagName = xmlDocument.GetElementsByTagName("pattern");
         foreach (XmlElement item in elementsByTagName)
@@ -728,7 +758,7 @@ public class CacheBuilderService
     private void FixPTRN_XML(ResourceEntry resource)
     {
         XmlDocument xmlDocument = new XmlDocument();
-        try { xmlDocument.Load(resource.GetStream()); } catch (XmlException) { return; }
+        try { xmlDocument.Load(resource.GetStream()); } catch (Exception) { return; }
         bool flag = false;
         XmlNodeList elementsByTagName = xmlDocument.GetElementsByTagName("complate");
         foreach (XmlElement item in elementsByTagName)
@@ -751,30 +781,13 @@ public class CacheBuilderService
     private void EnsureMainResourceCfg(string sims3ModsDir)
     {
         string mainResourceCfg = Path.Combine(sims3ModsDir, "Resource.cfg");
-        bool needsCreation = !File.Exists(mainResourceCfg);
-        if (!needsCreation)
-        {
-            try
-            {
-                string content = File.ReadAllText(mainResourceCfg);
-                if (!content.Contains("Cache", StringComparison.OrdinalIgnoreCase))
-                {
-                    needsCreation = true;
-                }
-            }
-            catch
-            {
-                needsCreation = true;
-            }
-        }
-
-        if (needsCreation)
+        if (!File.Exists(mainResourceCfg))
         {
             try
             {
                 using var sw = new StreamWriter(mainResourceCfg, false);
                 sw.WriteLine("Priority 500");
-                sw.WriteLine("PackedFile Cache/Config/Resource.cfg");
+                sw.WriteLine("Scan Cache/Config/");
                 sw.WriteLine("PackedFile Cache/*.package");
                 sw.WriteLine("PackedFile Cache/*/*.package");
                 sw.WriteLine("PackedFile Cache/*/*/*.package");
@@ -790,6 +803,43 @@ public class CacheBuilderService
                 sw.WriteLine("PackedFile Overrides/*/*/*.package");
                 sw.WriteLine("PackedFile Overrides/*/*/*/*.package");
                 sw.WriteLine("PackedFile Overrides/*/*/*/*/*.package");
+            }
+            catch { }
+        }
+        else
+        {
+            try
+            {
+                string content = File.ReadAllText(mainResourceCfg);
+                bool updated = false;
+
+                if (content.Contains("PackedFile Cache/Config/Resource.cfg", StringComparison.OrdinalIgnoreCase))
+                {
+                    content = content.Replace("PackedFile Cache/Config/Resource.cfg", "Scan Cache/Config/", StringComparison.OrdinalIgnoreCase);
+                    updated = true;
+                }
+
+                if (!content.Contains("Scan Cache", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lines = content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None).ToList();
+                    int insertIndex = 0;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        if (lines[i].TrimStart().StartsWith("Priority", StringComparison.OrdinalIgnoreCase))
+                        {
+                            insertIndex = i + 1;
+                            break;
+                        }
+                    }
+                    lines.Insert(insertIndex, "Scan Cache/Config/");
+                    content = string.Join(Environment.NewLine, lines);
+                    updated = true;
+                }
+
+                if (updated)
+                {
+                    File.WriteAllText(mainResourceCfg, content);
+                }
             }
             catch { }
         }

@@ -183,10 +183,10 @@ public class PKGManager
         }
     }
 
-    public async Task ImportFilesAsync(string[] files, Action<string>? onProgress = null, string duplicateAction = "rename", long? targetSetId = null)
+    public async Task<List<MetaEntity>> ImportFilesAsync(string[] files, Action<string>? onProgress = null, string duplicateAction = "rename", long? targetSetId = null)
     {
         CreateFolders();
-        int importedCount = 0;
+        var importedPaths = new List<string>();
 
         foreach (var filePath in files)
         {
@@ -196,7 +196,7 @@ public class PKGManager
             if (IsArchiveExtension(fileName))
             {
                 var extractedPaths = ExtractPackagesFromArchive(filePath, _options.ManagedPackageFolderPath, duplicateAction, onProgress);
-                importedCount += extractedPaths.Count;
+                importedPaths.AddRange(extractedPaths);
             }
             else
             {
@@ -224,17 +224,95 @@ public class PKGManager
                 }
 
                 File.Copy(filePath, destPath, overwrite: true);
-                importedCount++;
+                importedPaths.Add(destPath);
                 onProgress?.Invoke($"Imported file: {fileName}");
             }
         }
 
-        if (importedCount > 0)
+        if (importedPaths.Count > 0)
         {
             onProgress?.Invoke("Registering imported files...");
-            await CheckOrphanPackagesAsync(targetSetId);
+            var registered = await RegisterSpecificFilesAsync(importedPaths, targetSetId);
             onProgress?.Invoke("Import finished.");
+            return registered;
         }
+
+        return new List<MetaEntity>();
+    }
+
+    public async Task<List<MetaEntity>> RegisterSpecificFilesAsync(IEnumerable<string> filePaths, long? targetSetId = null)
+    {
+        var result = new List<MetaEntity>();
+        var setEntities = await _db.SetsEntities.ToListAsync();
+        SetsEntity assignSet;
+        if (targetSetId.HasValue)
+        {
+            var requestedSet = setEntities.FirstOrDefault(s => s.Id == targetSetId.Value);
+            assignSet = requestedSet ?? setEntities.FirstOrDefault(s => s.Name == "Default") ?? setEntities.First();
+        }
+        else
+        {
+            assignSet = setEntities.FirstOrDefault(s => s.Name == "Default") ?? setEntities.First();
+        }
+
+        foreach (var filePath in filePaths)
+        {
+            if (!File.Exists(filePath)) continue;
+
+            string fileName = Path.GetFileName(filePath);
+            var existingMeta = await _db.MetaEntities.FirstOrDefaultAsync(m => m.FileName == fileName);
+            var fileInfo = new FileInfo(filePath);
+            double currentSizeKb = fileInfo.Length / 1024.0;
+            bool isSims3Pack = Path.GetExtension(fileName).Equals(".sims3pack", StringComparison.OrdinalIgnoreCase);
+
+            if (existingMeta == null)
+            {
+                (string PackageType, string CASCategories, string CASAge, string CASGender, string CASOutfitCategory) typeInfo = ("Other", "", "", "", "");
+                try
+                {
+                    typeInfo = DetectPackageType(filePath, isSims3Pack);
+                }
+                catch { }
+
+                var tombstone = await _db.Tombstones.FirstOrDefaultAsync(t => t.FileName == fileName);
+                var targetSet = (tombstone != null && tombstone.SetsEntityId.HasValue && setEntities.Any(s => s.Id == tombstone.SetsEntityId.Value))
+                    ? setEntities.First(s => s.Id == tombstone.SetsEntityId.Value)
+                    : assignSet;
+
+                var meta = new MetaEntity
+                {
+                    FileName = fileName,
+                    FileType = isSims3Pack ? "TS3PACK" : "DBPF",
+                    PackageType = tombstone != null ? tombstone.PackageType : typeInfo.PackageType,
+                    CASCategories = tombstone != null ? tombstone.CASCategories : typeInfo.CASCategories,
+                    CASAge = tombstone != null ? tombstone.CASAge : typeInfo.CASAge,
+                    CASGender = tombstone != null ? tombstone.CASGender : typeInfo.CASGender,
+                    CASOutfitCategory = tombstone != null ? tombstone.CASOutfitCategory : typeInfo.CASOutfitCategory,
+                    IsUserTagged = tombstone != null ? tombstone.IsUserTagged : false,
+                    UserTags = tombstone != null ? tombstone.UserTags : null,
+                    CompleteFileName = filePath,
+                    SetsEntity = targetSet,
+                    InstallDate = DateTime.Now.ToString(),
+                    Manifest = string.Empty,
+                    Enabled = true,
+                    FileSize = currentSizeKb
+                };
+
+                targetSet.Dirty = true;
+                _db.MetaEntities.Add(meta);
+                result.Add(meta);
+            }
+            else
+            {
+                existingMeta.FileSize = currentSizeKb;
+                existingMeta.CompleteFileName = filePath;
+                if (existingMeta.SetsEntity != null) existingMeta.SetsEntity.Dirty = true;
+                result.Add(existingMeta);
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return result;
     }
 
     public string GetDownloadsFolderPath()
@@ -506,7 +584,7 @@ public class PKGManager
                 bool isSims3Pack = Path.GetExtension(fileName).Equals(".sims3pack", StringComparison.OrdinalIgnoreCase);
                 bool sizeChanged = Math.Abs(existingMeta.FileSize - currentSizeKb) > 0.01;
 
-                if (sizeChanged || existingMeta.CompleteFileName != filePath || (existingMeta.SetsEntity != null && existingMeta.SetsEntity.Dirty))
+                if (sizeChanged || existingMeta.CompleteFileName != filePath)
                 {
                     (string PackageType, string CASCategories, string CASAge, string CASGender, string CASOutfitCategory) typeInfo = ("Other", "", "", "", "");
                     try

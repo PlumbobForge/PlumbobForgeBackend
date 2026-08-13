@@ -16,7 +16,8 @@ namespace PlumbobForge.Backend.Services;
 public class PKGManager
 {
     private readonly AppDbContext _db;
-    private readonly PlumbobForgeOptions _options;
+    private readonly IOptionsMonitor<PlumbobForgeOptions> _optionsMonitor;
+    private PlumbobForgeOptions _options => _optionsMonitor.CurrentValue;
     private readonly LocalizationService _localizer;
     private readonly PackageTypeService _packageTypeService;
     private readonly ArchiveService _archiveService;
@@ -25,7 +26,7 @@ public class PKGManager
 
     public PKGManager(
         AppDbContext db,
-        IOptionsSnapshot<PlumbobForgeOptions> options,
+        IOptionsMonitor<PlumbobForgeOptions> options,
         LocalizationService localizer,
         PackageTypeService packageTypeService,
         ArchiveService archiveService,
@@ -33,7 +34,7 @@ public class PKGManager
         CacheBuilderService cacheBuilderService)
     {
         _db = db;
-        _options = options.Value;
+        _optionsMonitor = options;
         _localizer = localizer;
         _packageTypeService = packageTypeService;
         _archiveService = archiveService;
@@ -315,45 +316,85 @@ public class PKGManager
         return result;
     }
 
+    public string GetSims3UserFolderPath()
+    {
+        string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string eaDir = Path.Combine(docs, "Electronic Arts");
+        if (Directory.Exists(eaDir))
+        {
+            var candidates = Directory.GetDirectories(eaDir)
+                .Where(d => Path.GetFileName(d).Contains("Sims 3", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (candidates.Count > 0)
+            {
+                var exactMatch = candidates.FirstOrDefault(d => Path.GetFileName(d).Equals("The Sims 3", StringComparison.OrdinalIgnoreCase));
+                return exactMatch ?? candidates[0];
+            }
+        }
+
+        return Path.Combine(eaDir, "The Sims 3");
+    }
+
     public string GetDownloadsFolderPath()
     {
-        string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(userProfile, "Downloads");
+        string sims3UserDir = GetSims3UserFolderPath();
+        return Path.Combine(sims3UserDir, "Downloads");
     }
 
     public List<string> GetObservedFolders()
     {
         var result = new List<string>();
-        string downloads = GetDownloadsFolderPath();
-        if (Directory.Exists(downloads)) result.Add(downloads);
+
+        if (_options.ObservedFolders != null && _options.ObservedFolders.Count > 0)
+        {
+            foreach (var folder in _options.ObservedFolders)
+            {
+                if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder) && !result.Contains(folder))
+                {
+                    result.Add(folder);
+                }
+            }
+        }
+        else
+        {
+            string downloads = GetDownloadsFolderPath();
+            if (Directory.Exists(downloads)) result.Add(downloads);
+        }
+
         return result;
     }
 
     public List<string> CheckDownloadsDuplicates()
     {
-        string downloadsDir = GetDownloadsFolderPath();
-        if (!Directory.Exists(downloadsDir)) return new List<string>();
+        var folders = GetObservedFolders();
+        if (folders.Count == 0) return new List<string>();
 
         var validExts = new[] { ".package", ".sims3pack", ".zip", ".rar", ".7z" };
         var candidateNames = new List<string>();
 
-        foreach (var file in Directory.GetFiles(downloadsDir))
+        foreach (var dir in folders)
         {
-            string ext = Path.GetExtension(file).ToLowerInvariant();
-            if (!validExts.Contains(ext)) continue;
+            if (!Directory.Exists(dir)) continue;
 
-            string fileName = Path.GetFileName(file);
-            if (IsArchiveExtension(fileName))
+            foreach (var file in Directory.GetFiles(dir))
             {
-                try
+                string ext = Path.GetExtension(file).ToLowerInvariant();
+                if (!validExts.Contains(ext)) continue;
+
+                string fileName = Path.GetFileName(file);
+                if (IsArchiveExtension(fileName))
                 {
-                    candidateNames.AddRange(GetArchivePackageFileNames(file));
+                    try
+                    {
+                        candidateNames.AddRange(GetArchivePackageFileNames(file));
+                    }
+                    catch { }
                 }
-                catch { }
-            }
-            else
-            {
-                candidateNames.Add(fileName);
+                else
+                {
+                    candidateNames.Add(fileName);
+                }
             }
         }
 
@@ -362,15 +403,22 @@ public class PKGManager
 
     public async Task<int> ImportFromDownloadsAsync(Action<string>? onProgress = null, string duplicateAction = "rename")
     {
-        string downloadsDir = GetDownloadsFolderPath();
-        if (!Directory.Exists(downloadsDir)) return 0;
+        var folders = GetObservedFolders();
+        if (folders.Count == 0) return 0;
 
         CreateFolders();
 
         var validExts = new[] { ".package", ".sims3pack", ".zip", ".rar", ".7z" };
-        var filesToImport = Directory.GetFiles(downloadsDir)
-            .Where(f => validExts.Contains(Path.GetExtension(f).ToLowerInvariant()))
-            .ToList();
+        var filesToImport = new List<string>();
+
+        foreach (var dir in folders)
+        {
+            if (!Directory.Exists(dir)) continue;
+            filesToImport.AddRange(Directory.GetFiles(dir)
+                .Where(f => validExts.Contains(Path.GetExtension(f).ToLowerInvariant())));
+        }
+
+        if (filesToImport.Count == 0) return 0;
 
         int importedCount = 0;
 
@@ -413,7 +461,7 @@ public class PKGManager
                 {
                     File.Move(file, destPath, overwrite: true);
                     importedCount++;
-                    onProgress?.Invoke($"Moved from Downloads: {fileName}");
+                    onProgress?.Invoke($"Moved to Library: {fileName}");
                 }
                 catch (Exception ex)
                 {

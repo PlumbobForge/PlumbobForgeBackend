@@ -97,6 +97,29 @@ public static class ItemEndpoints
             return Results.File(thumbPath, "image/png");
         });
 
+        // Open item file folder in Explorer
+        app.MapPost("/api/items/{id}/open-folder", async (long id, AppDbContext db) =>
+        {
+            var item = await db.MetaEntities.FindAsync(id);
+            if (item == null || string.IsNullOrWhiteSpace(item.CompleteFileName) || !System.IO.File.Exists(item.CompleteFileName))
+                return Results.NotFound(new { message = "File not found on disk" });
+
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{item.CompleteFileName}\"",
+                    UseShellExecute = true
+                });
+                return Results.Ok();
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(ex.Message);
+            }
+        });
+
         // Move items
         app.MapPut("/api/items/move", async (AppDbContext db, HttpContext context) =>
         {

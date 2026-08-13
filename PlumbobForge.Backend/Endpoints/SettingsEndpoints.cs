@@ -64,6 +64,7 @@ public static class SettingsEndpoints
                         ["Language"] = newOptions.Language,
                         ["Theme"] = newOptions.Theme,
                         ["CacheMethod"] = newOptions.CacheMethod,
+                        ["EnableAutoScan"] = newOptions.EnableAutoScan,
                         ["ObservedFolders"] = jsonObserved
                     };
 
@@ -74,8 +75,11 @@ public static class SettingsEndpoints
 
                     try
                     {
+                        var config = ctx.RequestServices.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+                        (config as Microsoft.Extensions.Configuration.IConfigurationRoot)?.Reload();
+
                         var watcherService = ctx.RequestServices.GetService<DownloadsWatcherService>();
-                        watcherService?.ReloadWatchers();
+                        watcherService?.ReloadWatchers(newOptions);
                     }
                     catch { }
 
@@ -119,7 +123,7 @@ public static class SettingsEndpoints
             var autoOptions = new PlumbobForgeOptions
             {
                 DocumentBaseDir = basePath,
-                DownloadFolderName = string.Empty,
+                DownloadFolderName = "Downloads",
                 ArchiveFolderName = string.Empty,
                 TS3PackFolderName = string.Empty,
                 ManagedPackageFolderName = "Library",

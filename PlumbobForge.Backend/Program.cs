@@ -35,7 +35,8 @@ builder.Services.AddScoped<PlumbobForge.Backend.Services.ArchiveService>();
 builder.Services.AddScoped<PlumbobForge.Backend.Services.ThumbnailService>();
 builder.Services.AddScoped<PlumbobForge.Backend.Services.CacheBuilderService>();
 builder.Services.AddScoped<PlumbobForge.Backend.Services.PKGManager>();
-builder.Services.AddHostedService<PlumbobForge.Backend.Services.DownloadsWatcherService>();
+builder.Services.AddSingleton<PlumbobForge.Backend.Services.DownloadsWatcherService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PlumbobForge.Backend.Services.DownloadsWatcherService>());
 
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
 {

@@ -27,8 +27,15 @@ public class DownloadsWatcherService : BackgroundService
     {
         ReloadWatchers();
 
-        // Initial scan on startup
-        await TriggerAutoImportAsync("Startup scan");
+        // Initial scan on startup (only if EnableAutoScan is enabled)
+        using (var scope = _serviceProvider.CreateScope())
+        {
+            var options = scope.ServiceProvider.GetRequiredService<IOptionsSnapshot<PlumbobForgeOptions>>().Value;
+            if (options.EnableAutoScan)
+            {
+                await TriggerAutoImportAsync("Startup scan");
+            }
+        }
 
         try
         {
@@ -40,7 +47,7 @@ public class DownloadsWatcherService : BackgroundService
         }
     }
 
-    public void ReloadWatchers()
+    public void ReloadWatchers(PlumbobForgeOptions? updatedOptions = null)
     {
         try
         {
@@ -48,31 +55,57 @@ public class DownloadsWatcherService : BackgroundService
 
             using var scope = _serviceProvider.CreateScope();
             var pkgManager = scope.ServiceProvider.GetRequiredService<PKGManager>();
-            var options = scope.ServiceProvider.GetRequiredService<IOptionsSnapshot<PlumbobForgeOptions>>().Value;
-            var folders = pkgManager.GetObservedFolders();
+            var options = updatedOptions ?? scope.ServiceProvider.GetRequiredService<IOptionsSnapshot<PlumbobForgeOptions>>().Value;
 
-            // 1. Watch observed "Downloads" folders
-            foreach (var dir in folders)
+            var folders = new System.Collections.Generic.List<string>();
+            if (options.ObservedFolders != null && options.ObservedFolders.Count > 0)
             {
-                if (!Directory.Exists(dir))
+                foreach (var folder in options.ObservedFolders)
                 {
-                    try { Directory.CreateDirectory(dir); } catch { }
+                    if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder) && !folders.Contains(folder))
+                    {
+                        folders.Add(folder);
+                    }
+                }
+            }
+            else
+            {
+                string downloads = pkgManager.GetDownloadsFolderPath();
+                if (Directory.Exists(downloads)) folders.Add(downloads);
+            }
+
+            // 1. Watch observed folders (only if EnableAutoScan is true)
+            if (options.EnableAutoScan)
+            {
+                foreach (var dir in folders)
+                {
+                    if (!Directory.Exists(dir))
+                    {
+                        try { Directory.CreateDirectory(dir); } catch { }
+                    }
+
+                    if (Directory.Exists(dir))
+                    {
+                        _logger.LogInformation("Starting observed folder watcher on: {Path}", dir);
+                        var watcher = new FileSystemWatcher(dir)
+                        {
+                            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
+                            Filter = "*.*",
+                            EnableRaisingEvents = true
+                        };
+                        watcher.Created += OnFileCreatedOrChanged;
+                        watcher.Changed += OnFileCreatedOrChanged;
+                        watcher.Renamed += OnFileRenamed;
+                        _watchers.Add(watcher);
+                    }
                 }
 
-                if (Directory.Exists(dir))
-                {
-                    _logger.LogInformation("Starting observed folder watcher on: {Path}", dir);
-                    var watcher = new FileSystemWatcher(dir)
-                    {
-                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
-                        Filter = "*.*",
-                        EnableRaisingEvents = true
-                    };
-                    watcher.Created += OnFileCreatedOrChanged;
-                    watcher.Changed += OnFileCreatedOrChanged;
-                    watcher.Renamed += OnFileRenamed;
-                    _watchers.Add(watcher);
-                }
+                // Immediately trigger an import check on the newly reloaded observed folders
+                _ = Task.Run(() => TriggerAutoImportAsync("Observed folders updated"));
+            }
+            else
+            {
+                _logger.LogInformation("Auto-scan is disabled in settings. Skipping observed folder watchers.");
             }
 
             // 2. Watch main Library folder (including subdirectories for set folders and restored Recycle Bin files)
@@ -193,12 +226,18 @@ public class DownloadsWatcherService : BackgroundService
 
     private async Task TriggerAutoImportAsync(string reason)
     {
+        using var scope = _serviceProvider.CreateScope();
+        var options = scope.ServiceProvider.GetRequiredService<IOptionsSnapshot<PlumbobForgeOptions>>().Value;
+        if (!options.EnableAutoScan)
+        {
+            return;
+        }
+
         if (!await _importLock.WaitAsync(100)) return;
 
         try
         {
             _logger.LogInformation("Triggering automatic import from Downloads ({Reason})...", reason);
-            using var scope = _serviceProvider.CreateScope();
             var pkgManager = scope.ServiceProvider.GetRequiredService<PKGManager>();
             var notifier = scope.ServiceProvider.GetRequiredService<NotificationService>();
 

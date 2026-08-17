@@ -779,11 +779,6 @@ public class CacheBuilderService
                 using var sw = new StreamWriter(mainResourceCfg, false);
                 sw.WriteLine("Priority 500");
                 sw.WriteLine("PackedFile Cache/Config/Resource.cfg");
-                sw.WriteLine("PackedFile Cache/*.package");
-                sw.WriteLine("PackedFile Cache/*/*.package");
-                sw.WriteLine("PackedFile Cache/*/*/*.package");
-                sw.WriteLine("PackedFile Cache/*/*/*/*.package");
-                sw.WriteLine("PackedFile Cache/*/*/*/*/*.package");
                 sw.WriteLine("PackedFile Packages/*.package");
                 sw.WriteLine("PackedFile Packages/*/*.package");
                 sw.WriteLine("PackedFile Packages/*/*/*.package");
